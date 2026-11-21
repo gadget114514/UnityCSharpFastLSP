@@ -171,19 +171,25 @@ public class Phase1To3IntegrationTests
             """;
         Assert.True(server.HandleMessage(Encoding.UTF8.GetBytes(completionReq)));
 
-        // 6. didChange (incremental)
+        // 6. formatting
+        string formatReq = """
+            {"jsonrpc":"2.0","id":5,"method":"textDocument/formatting","params":{"textDocument":{"uri":"file:///Test.cs"},"options":{"tabSize":4,"insertSpaces":true}}}
+            """;
+        Assert.True(server.HandleMessage(Encoding.UTF8.GetBytes(formatReq)));
+
+        // 7. didChange (incremental)
         string didChange = """
             {"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///Test.cs","version":2},"contentChanges":[{"range":{"start":{"line":10,"character":20},"end":{"line":10,"character":22}},"text":"999"}]}}
             """;
         Assert.True(server.HandleMessage(Encoding.UTF8.GetBytes(didChange)));
 
-        // 7. shutdown
+        // 8. shutdown
         string shutdownReq = """
-            {"jsonrpc":"2.0","id":5,"method":"shutdown"}
+            {"jsonrpc":"2.0","id":6,"method":"shutdown"}
             """;
         Assert.True(server.HandleMessage(Encoding.UTF8.GetBytes(shutdownReq)));
 
-        // 8. exit
+        // 9. exit
         string exitNotif = """
             {"jsonrpc":"2.0","method":"exit"}
             """;

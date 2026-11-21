@@ -195,7 +195,23 @@ public sealed record ServerCapabilities(
     [property: JsonPropertyName("completionProvider")] CompletionOptions? CompletionProvider,
     [property: JsonPropertyName("definitionProvider")] bool DefinitionProvider,
     [property: JsonPropertyName("referencesProvider")] bool ReferencesProvider,
-    [property: JsonPropertyName("documentSymbolProvider")] bool DocumentSymbolProvider
+    [property: JsonPropertyName("documentSymbolProvider")] bool DocumentSymbolProvider,
+    [property: JsonPropertyName("documentFormattingProvider")] bool DocumentFormattingProvider = true
+);
+
+public readonly record struct TextEdit(
+    [property: JsonPropertyName("range")] Range Range,
+    [property: JsonPropertyName("newText")] string NewText
+);
+
+public sealed record FormattingOptions(
+    [property: JsonPropertyName("tabSize")] int TabSize,
+    [property: JsonPropertyName("insertSpaces")] bool InsertSpaces
+);
+
+public sealed record DocumentFormattingParams(
+    [property: JsonPropertyName("textDocument")] TextDocumentIdentifier TextDocument,
+    [property: JsonPropertyName("options")] FormattingOptions Options
 );
 
 public sealed record CompletionOptions(

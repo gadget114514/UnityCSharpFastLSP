@@ -6,6 +6,40 @@ public static class CompletionProvider
 {
     public static CompletionList GetCompletions(DocumentSemanticModel model, Position position)
     {
+        var snapshot = model.Snapshot;
+        int offset = snapshot.Lines.GetOffset(position.Line, position.Character);
+        string source = snapshot.Source;
+
+        // ドット直後のメンバーアクセス判定 ("target.")
+        if (offset > 0 && offset <= source.Length)
+        {
+            int p = offset - 1;
+            while (p >= 0 && char.IsWhiteSpace(source[p])) p--;
+            if (p >= 0 && source[p] == '.')
+            {
+                // ドットの手前の識別子を取得
+                int idEnd = p;
+                int idStart = idEnd - 1;
+                while (idStart >= 0 && (char.IsLetterOrDigit(source[idStart]) || source[idStart] == '_'))
+                {
+                    idStart--;
+                }
+                idStart++;
+
+                if (idEnd > idStart)
+                {
+                    string target = source.Substring(idStart, idEnd - idStart);
+                    var memberItems = ScopedResolver.ResolveMemberCompletions(model, target);
+                    if (memberItems.Count > 0)
+                    {
+                        // 型メンバーに絞り込んで返却！(grep とは決定的に違う！)
+                        return new CompletionList(IsIncomplete: false, Items: memberItems);
+                    }
+                }
+            }
+        }
+
+        // 通常の補完（Unity メッセージ・属性・識別子）
         var items = new List<CompletionItem>();
 
         // 1. Unity ライフサイクルメソッド候補
@@ -34,11 +68,6 @@ public static class CompletionProvider
         }
 
         // 3. インデックス内のシンボル候補
-        var snapshot = model.Snapshot;
-        int offset = snapshot.Lines.GetOffset(position.Line, position.Character);
-        int nodeIdx = snapshot.FindNodeAt(offset);
-
-        // 同一ファイル内の宣言ノード等を追加
         for (int i = 0; i < snapshot.Nodes.Length; i++)
         {
             var node = snapshot.Nodes[i];
@@ -52,7 +81,7 @@ public static class CompletionProvider
                 ));
             }
 
-            if (items.Count >= 50)
+            if (items.Count >= 60)
             {
                 break;
             }

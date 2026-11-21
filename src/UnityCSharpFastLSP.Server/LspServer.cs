@@ -70,6 +70,10 @@ public sealed class LspServer
                     HandleCompletion(id, parameters);
                     break;
 
+                case "textDocument/formatting":
+                    HandleFormatting(id, parameters);
+                    break;
+
                 case "textDocument/definition":
                     HandleDefinition(id, parameters);
                     break;
@@ -125,7 +129,8 @@ public sealed class LspServer
                 CompletionProvider: new CompletionOptions(ResolveProvider: false, TriggerCharacters: [".", " "]),
                 DefinitionProvider: true,
                 ReferencesProvider: true,
-                DocumentSymbolProvider: true
+                DocumentSymbolProvider: true,
+                DocumentFormattingProvider: true
             ),
             ServerInfo: new ServerInfo("UnityCSharpFastLSP", "1.0.0-net11")
         );
@@ -216,6 +221,23 @@ public sealed class LspServer
         _writer.WriteRawResponse(id, "{\"isIncomplete\":false,\"items\":[]}"u8.ToArray());
     }
 
+    private void HandleFormatting(object? id, JsonElement parameters)
+    {
+        var @params = JsonSerializer.Deserialize(parameters, LspJsonSerializerContext.Default.DocumentFormattingParams);
+        if (@params != null)
+        {
+            var snapshot = _state.GetDocument(@params.TextDocument.Uri);
+            if (snapshot != null)
+            {
+                var edits = FastFormatter.FormatDocument(snapshot, @params.Options);
+                _writer.WriteResponse(id, edits, LspJsonSerializerContext.Default.ListTextEdit);
+                return;
+            }
+        }
+
+        _writer.WriteRawResponse(id, "[]"u8.ToArray());
+    }
+
     private void HandleDefinition(object? id, JsonElement parameters)
     {
         var @params = JsonSerializer.Deserialize(parameters, LspJsonSerializerContext.Default.TextDocumentPositionParams);
@@ -225,13 +247,9 @@ public sealed class LspServer
             if (snapshot != null)
             {
                 var model = new DocumentSemanticModel(snapshot, _state.SymbolIndex);
-                string? word = model.GetWordAtPosition(@params.Position);
-                if (!string.IsNullOrEmpty(word))
-                {
-                    var locations = _state.SymbolIndex.FindDefinitions(word);
-                    _writer.WriteResponse(id, locations, LspJsonSerializerContext.Default.ListLocation);
-                    return;
-                }
+                var locations = ScopedResolver.ResolveScopedDefinition(model, @params.TextDocument.Uri, @params.Position);
+                _writer.WriteResponse(id, locations, LspJsonSerializerContext.Default.ListLocation);
+                return;
             }
         }
 
