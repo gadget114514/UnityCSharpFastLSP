@@ -20,6 +20,7 @@ public sealed class LspProxy : IDisposable
         "textDocument/completion",
         "textDocument/hover",
         "textDocument/formatting",
+        "textDocument/definition",
         "textDocument/declaration",
         "textDocument/implementation",
         "textDocument/typeDefinition",

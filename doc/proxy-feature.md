@@ -23,7 +23,7 @@ The following table details how every LSP method is handled in **Proxy Mode** (`
 | `textDocument/publishDiagnostics` | Fast syntax diagnostics (CSFF) + Upstream compiler diagnostics (CS) streamed to client | **Both** | N/A | Fast syntax (< 2 ms) + Async Roslyn compiler |
 | `textDocument/completion` | Fast CST & SymbolIndex & Unity dictionary | **FastLSP** | `completionProvider: { triggerCharacters: [".", " "] }` | **0.1 ms 〜 0.3 ms** |
 | `textDocument/hover` | Fast symbol signature & Unity documentation | **FastLSP** | `hoverProvider: true` | **0.1 ms 〜 0.3 ms** |
-| `textDocument/definition` | Forwarded to Upstream Roslyn | **Upstream (Roslyn)** | **❌ NOT ADVERTISED** (`null` / omitted) | Full Roslyn type resolution across packages |
+| `textDocument/definition` | Fast scoped resolver (local, parameter, class, member, static) | **FastLSP** | `definitionProvider: true` | **0.1 ms 〜 0.3 ms** |
 | `textDocument/declaration` | Fast CST & SymbolIndex declaration search | **FastLSP** | `declarationProvider: true` | **0.1 ms 〜 0.4 ms** |
 | `textDocument/implementation` | Fast interface/base implementation search | **FastLSP** | `implementationProvider: true` | **0.1 ms 〜 0.4 ms** |
 | `textDocument/typeDefinition` | Fast variable type definition resolution | **FastLSP** | `typeDefinitionProvider: true` | **0.1 ms 〜 0.4 ms** |
@@ -37,9 +37,9 @@ The following table details how every LSP method is handled in **Proxy Mode** (`
 | `textDocument/rename` | Forwarded to Upstream Roslyn | **Upstream (Roslyn)** | `renameProvider: true` | Heavy semantic refactoring |
 | `textDocument/codeAction` | Forwarded to Upstream Roslyn | **Upstream (Roslyn)** | `codeActionProvider: true` | Roslyn analyzers & quick fixes |
 
-> [!IMPORTANT]
-> **Why `textDocument/definition` is not advertised in Proxy Mode**:
-> In standalone mode, FastLSP provides instant definition jumps (< 0.2 ms) across project sources. In proxy mode, however, `definitionProvider` is deliberately **not advertised** (`null` / omitted from `ServerCapabilities`) and forwarded directly to upstream Roslyn. This ensures that large multi-assembly Unity projects with complex NuGet packages, DLL metadata, and external references receive 100% full compiler-accurate definition jumps from Roslyn without collision or partial results.
+> [!NOTE]
+> **Sub-Millisecond `textDocument/definition` in Proxy Mode**:
+> FastLSP provides instant definition jumps (< 0.2 ms) across local variables, parameters, self-class fields/methods, base-class inherited members, cross-file dot-member access, and static members directly from memory without blocking on upstream Roslyn. FastLSP advertises `definitionProvider: true` in both standalone and proxy modes.
 
 ---
 

@@ -259,4 +259,134 @@ public class DefinitionJumpComprehensiveTests
         // 宣言位置そのものの上では自分自身を指すLocationは返さない（ループ防止）
         Assert.Empty(locs);
     }
+
+    [Fact]
+    public void DummyProjectRealWorldVerification()
+    {
+        string playerCode = """
+            using UnityEngine;
+            using Game.Data;
+
+            namespace Game.Runtime
+            {
+                public sealed class PlayerController : MonoBehaviour
+                {
+                    [SerializeField] private GameConfig config = null!;
+
+                    public int GetConfiguredHealth()
+                    {
+                        return config.MaxHealth;
+                    }
+                }
+
+                public interface IDamageable
+                {
+                    void ApplyDamage(int amount);
+                }
+
+                public sealed class Enemy : IDamageable
+                {
+                    public void ApplyDamage(int amount)
+                    {
+                        Report(amount);
+                    }
+
+                    private void Report(int amount)
+                    {
+                    }
+                }
+
+                public static class EnemyFactory
+                {
+                    public static Enemy Create()
+                    {
+                        var enemy = new Enemy();
+                        enemy.ApplyDamage(1);
+                        return enemy;
+                    }
+                }
+            }
+            """;
+
+        string configCode = """
+            using UnityEngine;
+
+            namespace Game.Data
+            {
+                public sealed class GameConfig : ScriptableObject
+                {
+                    [SerializeField] private int maxHealth = 100;
+                    public int MaxHealth => maxHealth;
+                }
+            }
+            """;
+
+        string playerUri = "file:///Assets/Scripts/PlayerController.cs";
+        string configUri = "file:///Assets/Scripts/Data/GameConfig.cs";
+
+        var playerSnap = CsffSyntaxAdapter.Parse(playerCode);
+        var configSnap = CsffSyntaxAdapter.Parse(configCode);
+
+        var index = new SymbolIndex();
+        index.UpdateFileSymbols(playerUri, SymbolExtractor.ExtractSymbols(playerUri, playerSnap));
+        index.UpdateFileSymbols(configUri, SymbolExtractor.ExtractSymbols(configUri, configSnap));
+
+        var model = new DocumentSemanticModel(playerSnap, index);
+
+        // 1. Cross-file member access: config.MaxHealth -> jumps to GameConfig.cs MaxHealth
+        int maxHealthUsage = playerCode.IndexOf("config.MaxHealth", StringComparison.Ordinal) + "config.".Length;
+        var (hLine, hCol) = playerSnap.Lines.GetPosition(maxHealthUsage);
+        var hDefs = ScopedResolver.ResolveScopedDefinition(model, playerUri, new Position(hLine, hCol));
+        Assert.NotEmpty(hDefs);
+        Assert.Equal(configUri, hDefs[0].Uri);
+        int maxHealthDecl = configCode.IndexOf("public int MaxHealth", StringComparison.Ordinal);
+        var (expHLine, _) = configSnap.Lines.GetPosition(maxHealthDecl);
+        Assert.Equal(expHLine, hDefs[0].Range.Start.Line);
+
+        // 2. Local var method call: enemy.ApplyDamage(1) -> jumps to Enemy.ApplyDamage
+        int applyDmgUsage = playerCode.IndexOf("enemy.ApplyDamage(1)", StringComparison.Ordinal) + "enemy.".Length;
+        var (aLine, aCol) = playerSnap.Lines.GetPosition(applyDmgUsage);
+        var aDefs = ScopedResolver.ResolveScopedDefinition(model, playerUri, new Position(aLine, aCol));
+        Assert.NotEmpty(aDefs);
+        int applyDmgDecl = playerCode.IndexOf("public void ApplyDamage(int amount)", StringComparison.Ordinal);
+        var (expALine, _) = playerSnap.Lines.GetPosition(applyDmgDecl);
+        Assert.Equal(expALine, aDefs[0].Range.Start.Line);
+
+        // 3. Self-class private method: Report(amount) inside Enemy -> jumps to Report
+        int reportUsage = playerCode.IndexOf("Report(amount)", StringComparison.Ordinal);
+        var (rLine, rCol) = playerSnap.Lines.GetPosition(reportUsage);
+        var rDefs = ScopedResolver.ResolveScopedDefinition(model, playerUri, new Position(rLine, rCol));
+        Assert.NotEmpty(rDefs);
+        int reportDecl = playerCode.IndexOf("private void Report(int amount)", StringComparison.Ordinal);
+        var (expRLine, _) = playerSnap.Lines.GetPosition(reportDecl);
+        Assert.Equal(expRLine, rDefs[0].Range.Start.Line);
+
+        // 4. Parameter reference: amount in Report(amount) -> jumps to ApplyDamage(int amount) parameter
+        int paramUsage = playerCode.IndexOf("Report(amount)", StringComparison.Ordinal) + "Report(".Length;
+        var (pLine, pCol) = playerSnap.Lines.GetPosition(paramUsage);
+        var pDefs = ScopedResolver.ResolveScopedDefinition(model, playerUri, new Position(pLine, pCol));
+        Assert.NotEmpty(pDefs);
+        int enemyBlock = playerCode.IndexOf("public sealed class Enemy", StringComparison.Ordinal);
+        int paramDecl = playerCode.IndexOf("ApplyDamage(int amount)", enemyBlock, StringComparison.Ordinal) + "ApplyDamage(int ".Length;
+        var (expPLine, _) = playerSnap.Lines.GetPosition(paramDecl);
+        Assert.Equal(expPLine, pDefs[0].Range.Start.Line);
+
+        // 5. Interface inheritance: class Enemy : IDamageable -> jumps to interface IDamageable
+        int ifaceUsage = playerCode.IndexOf(": IDamageable", StringComparison.Ordinal) + ": ".Length;
+        var (iLine, iCol) = playerSnap.Lines.GetPosition(ifaceUsage);
+        var iDefs = ScopedResolver.ResolveScopedDefinition(model, playerUri, new Position(iLine, iCol));
+        Assert.NotEmpty(iDefs);
+        int ifaceDecl = playerCode.IndexOf("public interface IDamageable", StringComparison.Ordinal);
+        var (expILine, _) = playerSnap.Lines.GetPosition(ifaceDecl);
+        Assert.True(expILine == iDefs[0].Range.Start.Line, $"Expected line {expILine}, but got line {iDefs[0].Range.Start.Line}, col {iDefs[0].Range.Start.Character}, Uri={iDefs[0].Uri}. All defs: [{string.Join(", ", iDefs.Select(d => $"{d.Uri}:{d.Range.Start.Line}:{d.Range.Start.Character}"))}]");
+
+        // 6. Self-class field access: config in config.MaxHealth -> jumps to private GameConfig config
+        int configUsage = playerCode.IndexOf("config.MaxHealth", StringComparison.Ordinal);
+        var (cLine, cCol) = playerSnap.Lines.GetPosition(configUsage);
+        var cDefs = ScopedResolver.ResolveScopedDefinition(model, playerUri, new Position(cLine, cCol));
+        Assert.NotEmpty(cDefs);
+        int configFieldDecl = playerCode.IndexOf("private GameConfig config", StringComparison.Ordinal);
+        var (expCLine, _) = playerSnap.Lines.GetPosition(configFieldDecl);
+        Assert.Equal(expCLine, cDefs[0].Range.Start.Line);
+    }
 }

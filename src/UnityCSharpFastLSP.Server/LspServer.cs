@@ -157,7 +157,7 @@ public sealed class LspServer
                 TextDocumentSync: 2, // Incremental
                 HoverProvider: true,
                 CompletionProvider: new CompletionOptions(ResolveProvider: false, TriggerCharacters: [".", " "]),
-                DefinitionProvider: _isProxy ? null : true,
+                DefinitionProvider: true,
                 ReferencesProvider: true,
                 DocumentSymbolProvider: true,
                 DocumentFormattingProvider: true,
@@ -168,7 +168,7 @@ public sealed class LspServer
                 RenameProvider: _isProxy ? true : null,
                 CodeActionProvider: _isProxy ? true : null
             ),
-            ServerInfo: new ServerInfo("UnityCSharpFastLSP", "0.2.0")
+            ServerInfo: new ServerInfo("UnityCSharpFastLSP", "0.2.1")
         );
 
         _writer.WriteResponse(id, result, LspJsonSerializerContext.Default.InitializeResult);

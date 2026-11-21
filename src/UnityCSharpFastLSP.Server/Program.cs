@@ -28,12 +28,11 @@ OPTIONS:
 
 INTELLIGENT HYBRID PROXY PRIORITY:
   Request Processing:
-    - Supported features (completion, hover, declaration, implementation, typeDefinition, references,
+    - Supported features (completion, hover, definition, declaration, implementation, typeDefinition, references,
       formatting, signatureHelp, semanticTokens, documentSymbol, workspace/symbol):
       FAST PATH -> Answered directly by FastLSP (0.1ms - 0.4ms).
-    - Heavy features (definition, rename, codeAction, compiler diagnostics CS0029/CS0103):
+    - Heavy features (rename, codeAction, compiler diagnostics CS0029/CS0103):
       HEAVY PATH -> Forwarded to upstream Roslyn server.
-      (Note: definitionProvider is not advertised in proxy mode to ensure upstream Roslyn accuracy).
   Upstream Server Discovery:
     1. Explicit path passed to --upstream <path>
     2. Environment variable UNITY_CSHARP_LSP_PATH
