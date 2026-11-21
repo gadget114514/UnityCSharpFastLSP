@@ -13,6 +13,9 @@ public static class FastFormatter
         var sb = new StringBuilder(source.Length + 64);
         var lines = source.Split(["\r\n", "\r", "\n"], StringSplitOptions.None);
 
+        // 文書の改行コードを維持する（プラットフォーム既定値には依存しない）
+        string eol = source.Contains("\r\n") ? "\r\n" : "\n";
+
         int currentIndent = 0;
 
         for (int i = 0; i < lines.Length; i++)
@@ -20,7 +23,7 @@ public static class FastFormatter
             string line = lines[i].Trim();
             if (line.Length == 0)
             {
-                sb.AppendLine();
+                sb.Append(eol);
                 continue;
             }
 
@@ -35,7 +38,7 @@ public static class FastFormatter
             {
                 sb.Append(indentStr);
             }
-            sb.AppendLine(line);
+            sb.Append(line).Append(eol);
 
             // 開き括弧で終わる行はインデントを1段上げる
             int openCount = 0;
@@ -66,16 +69,12 @@ public static class FastFormatter
             }
         }
 
-        string newText = sb.ToString().TrimEnd() + Environment.NewLine;
+        string newText = sb.ToString().TrimEnd() + eol;
 
-        // 全体を1つの TextEdit で置換
-        int lastLine = snapshot.Lines.LineCount;
-        int lastChar = 0;
-        if (lines.Length > 0)
-        {
-            lastLine = lines.Length;
-            lastChar = lines[^1].Length;
-        }
+        // 全体を1つの TextEdit で置換。終端は文書内の最終行の末尾を指す
+        // (末尾改行の後ろには、存在しない行を指さないようにする)
+        int lastLine = lines.Length - 1;
+        int lastChar = lines[^1].Length;
 
         var fullRange = new Protocol.Range(
             new Position(0, 0),

@@ -9,6 +9,7 @@ public static class SymbolExtractor
     public static List<Symbol> ExtractSymbols(string uri, DocumentSnapshot snapshot)
     {
         var symbols = new List<Symbol>();
+        string normalizedUri = UriHelper.Normalize(uri);
 
         for (int i = 0; i < snapshot.Nodes.Length; i++)
         {
@@ -34,7 +35,7 @@ public static class SymbolExtractor
                 new Position(endLine, endCol)
             );
 
-            // 親クラス名の取得
+            // 親クラス・インターフェース・列挙型名の取得
             string? containingType = null;
             int parent = node.Parent;
             while (parent >= 0)
@@ -42,7 +43,8 @@ public static class SymbolExtractor
                 var pNode = snapshot.Nodes[parent];
                 if (pNode.Kind is (int)CsffNodeKind.ClassDeclaration
                     or (int)CsffNodeKind.StructDeclaration
-                    or (int)CsffNodeKind.InterfaceDeclaration)
+                    or (int)CsffNodeKind.InterfaceDeclaration
+                    or (int)CsffNodeKind.EnumDeclaration)
                 {
                     containingType = CsffSyntaxAdapter.FindIdentifier(snapshot, pNode, out _, out _);
                     break;
@@ -76,7 +78,7 @@ public static class SymbolExtractor
                 NameId: 0,
                 Name: name,
                 Kind: kind.Value,
-                Uri: uri,
+                Uri: normalizedUri,
                 Range: range,
                 Signature: signature,
                 ContainingType: containingType,
@@ -136,6 +138,7 @@ public static class SymbolExtractor
             CsffNodeKind.StructDeclaration => SymbolKind.Struct,
             CsffNodeKind.InterfaceDeclaration => SymbolKind.Interface,
             CsffNodeKind.EnumDeclaration => SymbolKind.Enum,
+            CsffNodeKind.EnumMemberDeclaration => SymbolKind.EnumMember,
             CsffNodeKind.MethodDeclaration => SymbolKind.Method,
             CsffNodeKind.ConstructorDeclaration => SymbolKind.Constructor,
             CsffNodeKind.PropertyDeclaration => SymbolKind.Property,

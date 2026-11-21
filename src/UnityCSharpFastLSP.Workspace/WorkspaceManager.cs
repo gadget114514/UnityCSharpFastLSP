@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using UnityCSharpFastLSP.Protocol;
 using UnityCSharpFastLSP.Semantics;
 using UnityCSharpFastLSP.Syntax;
 
@@ -24,6 +25,7 @@ public sealed class WorkspaceManager
         var files = new List<string>();
         string assetsDir = Path.Combine(rootPath, "Assets");
         string packagesDir = Path.Combine(rootPath, "Packages");
+        string packageCacheDir = Path.Combine(rootPath, "Library", "PackageCache");
 
         if (Directory.Exists(assetsDir))
         {
@@ -33,6 +35,11 @@ public sealed class WorkspaceManager
         if (Directory.Exists(packagesDir))
         {
             files.AddRange(Directory.EnumerateFiles(packagesDir, "*.cs", SearchOption.AllDirectories));
+        }
+
+        if (Directory.Exists(packageCacheDir))
+        {
+            files.AddRange(Directory.EnumerateFiles(packageCacheDir, "*.cs", SearchOption.AllDirectories));
         }
 
         if (files.Count == 0)
@@ -80,6 +87,6 @@ public sealed class WorkspaceManager
 
     public static string PathToFileUri(string path)
     {
-        return new Uri(Path.GetFullPath(path)).AbsoluteUri;
+        return UriHelper.Normalize(new Uri(Path.GetFullPath(path)).AbsoluteUri);
     }
 }

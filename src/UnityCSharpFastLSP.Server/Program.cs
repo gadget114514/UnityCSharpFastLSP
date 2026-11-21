@@ -23,6 +23,7 @@ OPTIONS:
                          3) PATH environment variable, 4) Standard directories. (5: Fails with error).
   --upstream <path>    Explicit path to upstream Roslyn LSP server (e.g. UnityCSharpLSP.Server.exe).
                        If omitted with --proxy, automatically searches following priority 2 -> 3 -> 4.
+  --selftest, --test   Run end-to-end verification self-test (cross-file definition jumps) and exit.
   --print-config       Print LLM agent LSP configuration snippet (opencode.json format) to stdout and exit.
   -h, --help           Show this help and exit.
 
@@ -60,6 +61,11 @@ NOTES:
     {
         if (args.Length > 0)
         {
+            if (args.Contains("--selftest") || args.Contains("--test"))
+            {
+                return SelfTestRunner.RunSelfTest();
+            }
+
             if (args.Contains("--help") || args.Contains("-h"))
             {
                 Console.WriteLine(HelpDescription);

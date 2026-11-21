@@ -27,6 +27,7 @@ public static class CsffSyntaxAdapter
         (int)CsffNodeKind.MethodDeclaration,
         (int)CsffNodeKind.ConstructorDeclaration,
         (int)CsffNodeKind.PropertyDeclaration,
+        (int)CsffNodeKind.EnumMemberDeclaration,
     ];
 
     public static DocumentSnapshot Parse(
@@ -219,7 +220,9 @@ public static class CsffSyntaxAdapter
         bool methodLike = node.Kind is (int)CsffNodeKind.MethodDeclaration
             or (int)CsffNodeKind.ConstructorDeclaration;
         bool memberLike = node.Kind is (int)CsffNodeKind.FieldDeclaration
-            or (int)CsffNodeKind.PropertyDeclaration;
+            or (int)CsffNodeKind.PropertyDeclaration
+            or (int)CsffNodeKind.EnumMemberDeclaration;
+        bool enumMemberLike = node.Kind is (int)CsffNodeKind.EnumMemberDeclaration;
         bool delimiterFound = false;
         int selected = -1;
 
@@ -236,7 +239,7 @@ public static class CsffSyntaxAdapter
 
                 selected = t;
 
-                if (typeLike)
+                if (typeLike || enumMemberLike)
                 {
                     break;
                 }

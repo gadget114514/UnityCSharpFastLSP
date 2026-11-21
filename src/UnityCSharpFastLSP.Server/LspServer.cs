@@ -11,6 +11,7 @@ public sealed class LspServer
     private readonly LspMessageWriter _writer;
     private readonly bool _isProxy;
     private bool _isShutdown;
+    private bool _isInitialized;
 
     public LspServer(Stream output, bool isProxy = false)
     {
@@ -19,15 +20,58 @@ public sealed class LspServer
         _isProxy = isProxy;
     }
 
+    public ServerState State => _state;
+
     public bool HandleMessage(byte[] message)
     {
-        using JsonDocument doc = JsonDocument.Parse(message);
-        JsonElement root = doc.RootElement;
+        JsonDocument doc;
+        try
+        {
+            doc = JsonDocument.Parse(message);
+        }
+        catch (JsonException)
+        {
+            // 仕様: パースに失敗した場合は id = null で -32700 を返す
+            _writer.WriteError(null, JsonRpcErrorCode.ParseError, "Parse error");
+            return true;
+        }
 
+        using (doc)
+        {
+            JsonElement root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                _writer.WriteError(null, JsonRpcErrorCode.InvalidRequest, "Invalid Request");
+                return true;
+            }
+
+            return Dispatch(root);
+        }
+    }
+
+    private bool Dispatch(JsonElement root)
+    {
         string method = root.TryGetProperty("method", out var m) ? m.GetString() ?? "" : "";
         bool hasId = root.TryGetProperty("id", out var idElem);
         object? id = hasId ? GetIdValue(idElem) : null;
         JsonElement parameters = root.TryGetProperty("params", out var p) ? p : default;
+
+        // 仕様: initialize 以外のリクエストは初期化前なら -32002、shutdown 後なら -32600 を返す
+        // (shutdown は初期化前でも受け付ける。通知には応答しないので対象外)
+        if (hasId && method is not ("initialize" or "shutdown"))
+        {
+            if (!_isInitialized)
+            {
+                _writer.WriteError(id, JsonRpcErrorCode.ServerNotInitialized, "Server not initialized");
+                return true;
+            }
+
+            if (_isShutdown)
+            {
+                _writer.WriteError(id, JsonRpcErrorCode.InvalidRequest, "Invalid request: server is shut down");
+                return true;
+            }
+        }
 
         try
         {
@@ -35,6 +79,7 @@ public sealed class LspServer
             {
                 case "initialize":
                     HandleInitialize(id, parameters);
+                    _isInitialized = true;
                     break;
 
                 case "initialized":
@@ -113,9 +158,10 @@ public sealed class LspServer
                     break;
 
                 default:
+                    // 仕様: 未実装のリクエストは -32601。通知（id なし）には応答しない。
                     if (hasId)
                     {
-                        _writer.WriteRawResponse(id, "null"u8.ToArray());
+                        _writer.WriteError(id, JsonRpcErrorCode.MethodNotFound, $"Method not found: {method}");
                     }
                     break;
             }
@@ -125,7 +171,7 @@ public sealed class LspServer
             Console.Error.WriteLine($"Error handling method {method}: {ex}");
             if (hasId)
             {
-                _writer.WriteRawResponse(id, "null"u8.ToArray());
+                _writer.WriteError(id, JsonRpcErrorCode.InternalError, "Internal error");
             }
         }
 
@@ -135,7 +181,18 @@ public sealed class LspServer
     private void HandleInitialize(object? id, JsonElement parameters)
     {
         string rootPath = "";
-        if (parameters.TryGetProperty("rootUri", out var rootUriElem) && rootUriElem.GetString() is string rootUri)
+        if (parameters.TryGetProperty("workspaceFolders", out var wfElem) && wfElem.ValueKind == JsonValueKind.Array && wfElem.GetArrayLength() > 0)
+        {
+            var firstFolder = wfElem[0];
+            if (firstFolder.TryGetProperty("uri", out var uriElem) && uriElem.GetString() is string wfUri)
+            {
+                if (Uri.TryCreate(wfUri, UriKind.Absolute, out var uriObj) && uriObj.IsFile)
+                {
+                    rootPath = uriObj.LocalPath;
+                }
+            }
+        }
+        else if (parameters.TryGetProperty("rootUri", out var rootUriElem) && rootUriElem.GetString() is string rootUri)
         {
             if (Uri.TryCreate(rootUri, UriKind.Absolute, out var uriObj) && uriObj.IsFile)
             {

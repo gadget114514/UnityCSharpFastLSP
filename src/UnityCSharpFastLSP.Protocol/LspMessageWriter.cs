@@ -5,6 +5,16 @@ using System.Text.Json.Serialization.Metadata;
 
 namespace UnityCSharpFastLSP.Protocol;
 
+public static class JsonRpcErrorCode
+{
+    public const int ParseError = -32700;
+    public const int InvalidRequest = -32600;
+    public const int MethodNotFound = -32601;
+    public const int InvalidParams = -32602;
+    public const int InternalError = -32603;
+    public const int ServerNotInitialized = -32002;
+}
+
 public sealed class LspMessageWriter
 {
     private readonly Stream _output;
@@ -31,6 +41,14 @@ public sealed class LspMessageWriter
     {
         string rawJson = Encoding.UTF8.GetString(rawResultBytes);
         string msg = $"{{\"jsonrpc\":\"2.0\",\"id\":{(id is null ? "null" : JsonSerializer.Serialize(id))},\"result\":{rawJson}}}";
+        WriteFramedMessage(Encoding.UTF8.GetBytes(msg));
+    }
+
+    public void WriteError(object? id, int code, string message)
+    {
+        string idJson = id is null ? "null" : JsonSerializer.Serialize(id);
+        string msgJson = JsonSerializer.Serialize(message);
+        string msg = $"{{\"jsonrpc\":\"2.0\",\"id\":{idJson},\"error\":{{\"code\":{code},\"message\":{msgJson}}}}}";
         WriteFramedMessage(Encoding.UTF8.GetBytes(msg));
     }
 

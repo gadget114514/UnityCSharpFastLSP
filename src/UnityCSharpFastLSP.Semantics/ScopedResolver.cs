@@ -276,6 +276,20 @@ public static class ScopedResolver
             refs.AddRange(defs);
         }
 
+        // includeDeclaration=false のとき、宣言位置（索引上の宣言 + スコープ内の宣言）を除外する
+        var declSites = new HashSet<(int Line, int Character)>();
+        if (!includeDeclaration)
+        {
+            string normalizedUri = UriHelper.Normalize(uri);
+            foreach (var d in defs.Concat(ResolveScopedDefinition(model, uri, position)))
+            {
+                if (UriHelper.Normalize(d.Uri).Equals(normalizedUri, StringComparison.OrdinalIgnoreCase))
+                {
+                    declSites.Add((d.Range.Start.Line, d.Range.Start.Character));
+                }
+            }
+        }
+
         var snapshot = model.Snapshot;
         string source = snapshot.Source;
         int wordLen = word.Length;
@@ -292,7 +306,8 @@ public static class ScopedResolver
                 var (eLine, eCol) = snapshot.Lines.GetPosition(idx + wordLen);
                 var loc = new Location(uri, new Protocol.Range(new Position(sLine, sCol), new Position(eLine, eCol)));
 
-                if (!refs.Any(r => r.Uri.Equals(uri, StringComparison.OrdinalIgnoreCase) &&
+                if (!declSites.Contains((sLine, sCol)) &&
+                    !refs.Any(r => r.Uri.Equals(uri, StringComparison.OrdinalIgnoreCase) &&
                     r.Range.Start.Line == sLine && r.Range.Start.Character == sCol))
                 {
                     refs.Add(loc);
@@ -489,7 +504,37 @@ public static class ScopedResolver
             return matchNew.Groups[1].Value;
         }
 
-        // パターン2: Type variableName (宣言 / 引数 / フィールド)
+        // パターン2: var variableName = ...GetComponent<Type>(...) または FindObjectOfType<Type>(...)
+        var varGenericRegex = new Regex(
+            $@"\bvar\s+{Regex.Escape(variableName)}\s*=\s*(?:[A-Za-z0-9_.]+\.)?(?:GetComponent|GetComponentInChildren|GetComponentInParent|FindObjectOfType|FindAnyObjectByType|FindObjectsByType)\s*<\s*([A-Za-z0-9_]+)\s*>",
+            RegexOptions.Compiled);
+        var matchGen = varGenericRegex.Match(text);
+        if (matchGen.Success)
+        {
+            return matchGen.Groups[1].Value;
+        }
+
+        // パターン3: var variableName = expr as Type
+        var varAsRegex = new Regex(
+            $@"\bvar\s+{Regex.Escape(variableName)}\s*=[^;\n\r]+\bas\s+([A-Za-z0-9_]+)",
+            RegexOptions.Compiled);
+        var matchAs = varAsRegex.Match(text);
+        if (matchAs.Success && !IsReservedKeyword(matchAs.Groups[1].Value))
+        {
+            return matchAs.Groups[1].Value;
+        }
+
+        // パターン4: var variableName = (Type)expr
+        var varCastRegex = new Regex(
+            $@"\bvar\s+{Regex.Escape(variableName)}\s*=\s*\(\s*([A-Za-z0-9_]+)\s*\)",
+            RegexOptions.Compiled);
+        var matchCast = varCastRegex.Match(text);
+        if (matchCast.Success && !IsReservedKeyword(matchCast.Groups[1].Value))
+        {
+            return matchCast.Groups[1].Value;
+        }
+
+        // パターン5: Type variableName (宣言 / 引数 / フィールド)
         var typedVarRegex = new Regex(
             $@"\b([A-Za-z0-9_]+)\s+{Regex.Escape(variableName)}\b",
             RegexOptions.Compiled);
