@@ -18,9 +18,10 @@ This document provides a comprehensive overview of supported Language Server Pro
 | `textDocument/publishDiagnostics` | Notification | **Full** | Pushed from server. Reports CST syntax errors (`CSFF001` unclosed syntax, `CSFF002` bad token). Debounced by 5 ms with latest-version cancellation. |
 | `textDocument/documentSymbol` | Request | **Full** | Hierarchical document symbols (Namespace -> Class/Struct/Interface -> Methods/Properties/Fields/Enums) extracted from CST. |
 | `textDocument/hover` | Request | **Full** | Returns symbol signature, containing type, and Unity MonoBehaviour lifecycle documentation in Markdown. |
-| `textDocument/completion` | Request | **Full** | Provides Unity MonoBehaviour messages (13 methods with snippets), common Unity attributes (11 attributes), and workspace symbol names. |
+| `textDocument/completion` | Request | **Full** | Provides dot-member filtering (`x.`) via lightweight type inference (`var x = new T()`, `T x`, `this.`, parameters, fields), Unity MonoBehaviour messages (13 methods with snippets), common Unity attributes (11 attributes), and workspace symbol names. |
 | `textDocument/definition` | Request | **Full** | Navigates to definition locations using atomic `SymbolIndex` dictionary lookup. |
 | `textDocument/references` | Request | **Full** | Finds symbol references and declarations across the workspace. |
+| `textDocument/formatting` | Request | **Full** | Fast bracket indentation and whitespace normalization (`FastFormatter`). |
 
 ---
 

@@ -10,7 +10,7 @@ This document provides an honest, rigorous, and technical comparison between **U
 | :--- | :---: | :---: | :--- |
 | **Syntax Diagnostics** | **Full** (Roslyn parser) | **Full** (csff CST parser) | Both detect syntax errors (`CSFF001` unclosed braces, `CSFF002` bad tokens, missing semicolons, malformed declarations). FastLSP reports syntax errors in < 50 us. |
 | **Type & Semantic Diagnostics** | **Full** (CS0103 undeclared vars, CS0029 type mismatch, CS1503 arg types) | **None (Excluded by design)** | **Crucial difference**: FastLSP does NOT show red squigglies for type errors or calling non-existent methods. Compiler build is required to catch type errors. |
-| **Member Access Completion (`obj.`)** | **Precise** (Resolves type of `obj` via Roslyn and lists exact members) | **Approximation** (Lists workspace/file symbols & Unity messages) | In FastLSP, typing `player.` does not yet filter strictly to `Player`'s members; it provides fast identifier completion without type-bound filtering. |
+| **Member Access Completion (`obj.`)** | **Precise** (Resolves type of `obj` via Roslyn and lists exact members) | **Lightweight Scoped Inference** (`ScopedResolver`) | FastLSP resolves `obj`'s type using fast local inference (`var x = new T()`, `T x`, `this.`, parameters, fields) and filters candidates strictly to `obj`'s type members across the workspace index. |
 | **Unity Lifecycle Completion** | Supported | **Built-in Templates** (13 methods with snippets) | Both provide snippets for `Start()`, `Update()`, `Awake()`, etc. FastLSP returns in 0.15 ms. |
 | **Hover Information** | **Full** (Resolved type, XML docs, generic constraints) | **CST Signature + Unity Docs** | FastLSP displays `Kind Name`, containing type, and Markdown docs for Unity MonoBehaviour messages. FastLSP responds in 0.10 ms. |
 | **Go to Definition** | **Exact** (Resolves across overloads & namespace scopes) | **Name-Matched** ($O(1)$ dictionary lookup) | FastLSP jumps instantly to declarations sharing the same identifier. Overload ambiguity goes to the primary match. |
@@ -53,13 +53,24 @@ When an AI agent (such as OpenCode or Claude) is reading, modifying, and generat
 
 ---
 
-## 4. Roadmap to Elevate C# Semantic Intelligence
+## 4. Implemented Lightweight Semantic Intelligence & Future Roadmap
 
-FastLSP does not have to remain purely name-based. The next development steps to bring genuine C# semantic value without sacrificing sub-millisecond speed are:
+FastLSP is not just a flat identifier matcher. It incorporates high-speed structural inference:
 
-1. **Lightweight Type Inference for Local Variables (`var x = new Foo()`)**:
-   - Trace AST assignment expressions locally to deduce `x`'s type as `Foo`.
+### What Is Already Implemented (v0.1.0):
+1. **Lightweight Type Inference for Local Variables & Parameters**:
+   - Deduces `x`'s type from `var x = new Foo()`, `Foo x = ...;`, `(Foo target)`, and fields (`[SerializeField] private Foo _foo;`).
 2. **Member Access Filtering on Dots (`x.`)**:
-   - Once `x` is resolved to `Foo`, filter completion candidates strictly to members of `Foo` (extracted from `SymbolIndex`).
-3. **Workspace Type Resolution**:
-   - Associate classes with their declaring namespaces to prevent cross-namespace collisions.
+   - Once `x` is resolved to `Foo`, completion candidates are filtered strictly to members belonging to `Foo` (methods, properties, fields) via `ScopedResolver` and `SymbolIndex.FindMembersByContainingType`.
+3. **`this.` Self-Type Resolution**:
+   - Resolves `this.` to the enclosing class or struct.
+4. **Fast Indentation Formatting (`textDocument/formatting`)**:
+   - Re-indents braces and statements in < 1 ms without Roslyn.
+
+### Next Steps for Further Semantic Power:
+1. **Type Inheritance Chaining (`class A : B`)**:
+   - Traverse base class links in `SymbolIndex` to merge base members during dot completion (~2–5 µs overhead).
+2. **Pre-baked Unity API Dictionary**:
+   - In-memory trie of common Unity engine classes (`Transform`, `GameObject`, `Vector3`, `Mathf`) for instant completion without loading DLLs.
+3. **Signature Help (`textDocument/signatureHelp`)**:
+   - Display parameter signatures and active parameter indices while typing method calls.
