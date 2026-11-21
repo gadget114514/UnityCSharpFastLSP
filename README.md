@@ -148,10 +148,28 @@ USAGE:
   UnityCSharpFastLSP.Server [options]
 
 OPTIONS:
-  --stdio          Use standard input/output for LSP JSON-RPC communication (default: true).
-  --print-config   Print LLM agent LSP configuration snippet (opencode.json format) to stdout and exit.
-  -h, --help       Show help description and exit.
+  --stdio              Use standard input/output for LSP JSON-RPC communication (default: true).
+  --proxy              Enable Intelligent Hybrid Proxy mode.
+                       - Supported features are answered immediately by FastLSP (<0.3ms).
+                       - Unhandled heavy requests are forwarded to upstream Roslyn server.
+                       - Upstream discovery: 1) --upstream, 2) UNITY_CSHARP_LSP_PATH,
+                         3) OS API PATH search, 4) Standard directories. (5: Fails with error).
+  --upstream <path>    Explicit path to upstream Roslyn LSP server (e.g. UnityCSharpLSP.Server.exe).
+                       If omitted with --proxy, automatically searches following priority 2 -> 3 -> 4.
+  --print-config       Print LLM agent LSP configuration snippet (opencode.json format) to stdout and exit.
+  -h, --help           Show help description and exit.
 ```
+
+### Intelligent Hybrid Proxy Priority
+1. **Request Processing**:
+   - **Fast Path (Local Answer)**: All features supported by FastLSP (`completion`, `hover`, `definition`, `declaration`, `implementation`, `references`, `formatting`, `signatureHelp`, `semanticTokens`, `documentSymbol`, `workspace/symbol`) are answered directly in **0.1ms – 0.4ms**.
+   - **Heavy Path (Upstream Forward)**: Heavy operations (`rename`, `codeAction`, compiler diagnostics `CS0029`/`CS0103`) are forwarded to upstream Roslyn.
+2. **Upstream Server Discovery Order**:
+   1. Explicit path: `--upstream <path>`
+   2. Environment variable: `UNITY_CSHARP_LSP_PATH`
+   3. OS API PATH search: Windows `SearchPath` API (`UnityCSharpLSP.Server.exe`, `UnityCSharpLSP.exe`, `csharp-ls.exe`)
+   4. Standard installation directories (`%LOCALAPPDATA%\Programs\UnityCSharpLSP`, etc.)
+   5. **FAILED**: If no upstream server is found, terminates immediately with error code 1.
 
 ---
 

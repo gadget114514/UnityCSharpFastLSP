@@ -16,10 +16,29 @@ MODES:
 
 OPTIONS:
   --stdio              Use standard input/output for LSP JSON-RPC communication (default: true).
-  --proxy              Enable Intelligent Proxy mode (auto-detects and forwards heavy Roslyn requests to UnityCSharpLSP).
+  --proxy              Enable Intelligent Hybrid Proxy mode.
+                       - Supported features are answered immediately by FastLSP (<0.3ms).
+                       - Unhandled heavy requests are forwarded to upstream Roslyn server.
+                       - Upstream server is resolved via priority: 1) --upstream, 2) UNITY_CSHARP_LSP_PATH,
+                         3) PATH environment variable, 4) Standard directories. (5: Fails with error).
   --upstream <path>    Explicit path to upstream Roslyn LSP server (e.g. UnityCSharpLSP.Server.exe).
+                       If omitted with --proxy, automatically searches following priority 2 -> 3 -> 4.
   --print-config       Print LLM agent LSP configuration snippet (opencode.json format) to stdout and exit.
   -h, --help           Show this help and exit.
+
+INTELLIGENT HYBRID PROXY PRIORITY:
+  Request Processing:
+    - Supported features (completion, hover, definition, declaration, implementation, references,
+      formatting, signatureHelp, semanticTokens, documentSymbol, workspace/symbol):
+      FAST PATH -> Answered directly by FastLSP (0.1ms - 0.4ms).
+    - Heavy features (rename, codeAction, compiler diagnostics CS0029/CS0103):
+      HEAVY PATH -> Forwarded to upstream Roslyn server.
+  Upstream Server Discovery:
+    1. Explicit path passed to --upstream <path>
+    2. Environment variable UNITY_CSHARP_LSP_PATH
+    3. OS API PATH search (Windows SearchPath API for UnityCSharpLSP.Server.exe, UnityCSharpLSP.exe, csharp-ls.exe)
+    4. Standard installation directories (%LOCALAPPDATA%\Programs\UnityCSharpLSP, etc.)
+    5. FAILED -> Terminates immediately with error code 1 if upstream is not found.
 
 LLM / AI AGENT INTEGRATION (OpenCode, Claude Code, Antigravity, Cursor):
   To register this fast LSP server with OpenCode, add to your opencode.json:
@@ -79,13 +98,21 @@ $$"""
         if (isProxy)
         {
             Console.Error.WriteLine("UnityCSharpFastLSP.Server: Running in Intelligent Proxy mode");
-            using var proxy = new LspProxy(output, upstreamPath);
-            while (LspMessageReader.TryReadMessage(input, out byte[]? message))
+            try
             {
-                if (message is null || !proxy.HandleClientMessage(message))
+                using var proxy = new LspProxy(output, upstreamPath);
+                while (LspMessageReader.TryReadMessage(input, out byte[]? message))
                 {
-                    break;
+                    if (message is null || !proxy.HandleClientMessage(message))
+                    {
+                        break;
+                    }
                 }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[FATAL ERROR] Proxy initialization failed: {ex.Message}");
+                return 1;
             }
         }
         else
