@@ -34,7 +34,22 @@
 | 新版（通常スタンドアロン） | **PASS** | **PASS** | **ALL PASS** (< 1ms) |
 | 新版（proxy モード） | **PASS** | **PASS** | **ALL PASS** (< 1ms) |
 
-※ 本シナリオは `DocLspTestScenarioTests.cs` (C# xUnit テスト) および `lsp_def_test.py` (Python 自動E2Eテスト) にてCI/ローカルで恒常的にテストされ、全件合格しています。
+※ 上の表は v0.2.1 時点の記録です。以下の再検証結果で、この記載は更新されています。
+
+## 再検証結果（インデックス完了待ちの修正後）
+
+フィクスチャ（`test-fixtures/Survivors`、ファイル数が少ない）では、修正前の exe でも 5 回とも PASS でした。インデックスが要求より先に終わるためです。このため、大量のファイルがある環境を再現しました。
+
+- 大規模ワークスペース: フィクスチャに加えて `Assets/Gen` に 20,000 個の `.cs` ファイルを追加（`lsp_def_test.py` の引数で指定）。
+
+| exe | 実行 | ケース 1 (`capabilityUI`) | ケース 2 (`ShowCapabilitiesUI`) | 判定 |
+|---|---|---|---|---|
+| 既存の `artifacts/publish`（修正前のビルドと想定、ソースの版は未確認） | 3 回 | PASS | **FAIL**（3 回とも） | FAIL |
+| 修正後（インデックス完了待ち、commit `051856b`） | 3 回 | PASS | PASS | ALL PASS |
+
+フィクスチャのみの場合は、修正前後ともに 5 回すべて PASS でした。
+
+※ `DocLspTestScenarioTests.cs` (C# xUnit テスト) と `lsp_def_test.py` (Python E2E テスト) は、どちらも同じ 2 ケースを検証します。修正後の exe は、フィクスチャでも大規模ワークスペースでも全件 PASS でした。
 
 ---
 

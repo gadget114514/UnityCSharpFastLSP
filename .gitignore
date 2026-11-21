@@ -13,3 +13,7 @@ artifacts/
 zig-out/
 zig-pkg/
 *.o
+
+# 大規模テストセット（生成物。リポジトリにはコミットしない）
+test-large/
+test-fixtures/**/Assets/Gen/

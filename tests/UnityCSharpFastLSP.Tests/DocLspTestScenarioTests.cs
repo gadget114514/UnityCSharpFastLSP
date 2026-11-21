@@ -5,7 +5,7 @@ using Xunit;
 namespace UnityCSharpFastLSP.Tests;
 
 /// <summary>
-/// doc/lsp-test.md に記載された C# 定義ジャンプの再現・検証テストスイート
+/// doc/lsp-test-document-definition.md に記載された C# 定義ジャンプの再現・検証テストスイート
 /// 
 /// 検証ケース:
 /// 1. capabilityUI (same file): 21行、文字3 -> CapabilityUI.cs の 12行、文字51 (フィールド宣言)
@@ -123,7 +123,7 @@ public class DocLspTestScenarioTests : IDisposable
     [Fact]
     public void VerifyLineAndCharacterCoordinatesMatchDocSpec()
     {
-        // doc/lsp-test.md の仕様通りの座標になっているかをまずアサート
+        // doc/lsp-test-document-definition.md の仕様通りの座標になっているかをまずアサート
         string[] uiLines = File.ReadAllLines(_capabilityUiPath);
         Assert.Equal("capabilityUI.ShowCapabilitiesUI();", uiLines[21]);
 
