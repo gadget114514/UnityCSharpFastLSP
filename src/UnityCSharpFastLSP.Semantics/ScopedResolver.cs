@@ -174,6 +174,87 @@ public static class ScopedResolver
         return [];
     }
 
+    public static List<Location> ResolveDeclaration(
+        DocumentSemanticModel model,
+        string uri,
+        Position position)
+    {
+        string? word = model.GetWordAtPosition(position);
+        if (string.IsNullOrEmpty(word)) return [];
+        return model.Index.FindDeclarations(word);
+    }
+
+    public static List<Location> ResolveImplementation(
+        DocumentSemanticModel model,
+        string uri,
+        Position position)
+    {
+        string? word = model.GetWordAtPosition(position);
+        if (string.IsNullOrEmpty(word)) return [];
+        return model.Index.FindImplementations(word);
+    }
+
+    public static List<Location> ResolveTypeDefinition(
+        DocumentSemanticModel model,
+        string uri,
+        Position position)
+    {
+        string? word = model.GetWordAtPosition(position);
+        if (string.IsNullOrEmpty(word)) return [];
+
+        int offset = model.Snapshot.Lines.GetOffset(position.Line, position.Character);
+        string? typeName = ResolveVariableType(model.Snapshot, word, offset);
+        if (string.IsNullOrEmpty(typeName)) typeName = word;
+
+        return model.Index.FindDefinitions(typeName);
+    }
+
+    public static List<Location> ResolveReferences(
+        DocumentSemanticModel model,
+        string uri,
+        Position position,
+        bool includeDeclaration = true)
+    {
+        string? word = model.GetWordAtPosition(position);
+        if (string.IsNullOrEmpty(word)) return [];
+
+        var defs = model.Index.FindDefinitions(word);
+        var refs = new List<Location>();
+
+        if (includeDeclaration)
+        {
+            refs.AddRange(defs);
+        }
+
+        var snapshot = model.Snapshot;
+        string source = snapshot.Source;
+        int wordLen = word.Length;
+        int idx = 0;
+
+        while ((idx = source.IndexOf(word, idx, StringComparison.Ordinal)) >= 0)
+        {
+            bool left = idx == 0 || !(char.IsLetterOrDigit(source[idx - 1]) || source[idx - 1] == '_');
+            bool right = idx + wordLen == source.Length || !(char.IsLetterOrDigit(source[idx + wordLen]) || source[idx + wordLen] == '_');
+
+            if (left && right)
+            {
+                var (sLine, sCol) = snapshot.Lines.GetPosition(idx);
+                var (eLine, eCol) = snapshot.Lines.GetPosition(idx + wordLen);
+                var loc = new Location(uri, new Protocol.Range(new Position(sLine, sCol), new Position(eLine, eCol)));
+
+                if (!refs.Any(r => r.Uri.Equals(uri, StringComparison.OrdinalIgnoreCase) &&
+                    r.Range.Start.Line == sLine && r.Range.Start.Character == sCol))
+                {
+                    refs.Add(loc);
+                }
+            }
+
+            idx += wordLen;
+        }
+
+        return refs;
+    }
+
     private static bool IsDeclarationToken(DocumentSnapshot snapshot, int tokenIndex)
     {
         if (tokenIndex <= 0) return false;

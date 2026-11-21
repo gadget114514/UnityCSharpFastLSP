@@ -474,4 +474,106 @@ public class Phase1To3IntegrationTests
         var highlights = DocumentHighlightProvider.GetHighlights(model, new Position(line, col));
         Assert.Equal(2, highlights.Count);
     }
+
+    [Fact]
+    public void DeclarationAndImplementationWorkForInterfaces()
+    {
+        const string ifaceCode = """
+            public interface IDamageable
+            {
+                void TakeDamage(int amount);
+            }
+            """;
+        var ifaceSnap = CsffSyntaxAdapter.Parse(ifaceCode);
+        var index = new SymbolIndex();
+        index.UpdateFileSymbols("file:///IDamageable.cs", SymbolExtractor.ExtractSymbols("file:///IDamageable.cs", ifaceSnap));
+
+        const string implCode = """
+            public class Zombie : IDamageable
+            {
+                public void TakeDamage(int amount)
+                {
+                }
+            }
+            """;
+        var implSnap = CsffSyntaxAdapter.Parse(implCode);
+        index.UpdateFileSymbols("file:///Zombie.cs", SymbolExtractor.ExtractSymbols("file:///Zombie.cs", implSnap));
+        var ifaceModel = new DocumentSemanticModel(ifaceSnap, index);
+        var implModel = new DocumentSemanticModel(implSnap, index);
+
+        // 1. Implementation jump on interface IDamageable -> jumps to Zombie
+        int ifaceOffset = ifaceCode.IndexOf("IDamageable", StringComparison.Ordinal);
+        var (iLine, iCol) = ifaceSnap.Lines.GetPosition(ifaceOffset);
+        var ifaceImpls = ScopedResolver.ResolveImplementation(ifaceModel, "file:///IDamageable.cs", new Position(iLine, iCol));
+        Assert.NotEmpty(ifaceImpls);
+        Assert.Equal("file:///Zombie.cs", ifaceImpls[0].Uri);
+
+        // 2. Implementation jump on interface method TakeDamage -> jumps to Zombie.TakeDamage
+        int mOffset = ifaceCode.IndexOf("TakeDamage", StringComparison.Ordinal);
+        var (mLine, mCol) = ifaceSnap.Lines.GetPosition(mOffset);
+        var methodImpls = ScopedResolver.ResolveImplementation(ifaceModel, "file:///IDamageable.cs", new Position(mLine, mCol));
+        Assert.NotEmpty(methodImpls);
+        Assert.Equal("file:///Zombie.cs", methodImpls[0].Uri);
+
+        // 3. Declaration jump on Zombie.TakeDamage -> jumps to IDamageable.TakeDamage
+        int zOffset = implCode.IndexOf("TakeDamage", StringComparison.Ordinal);
+        var (zLine, zCol) = implSnap.Lines.GetPosition(zOffset);
+        var decls = ScopedResolver.ResolveDeclaration(implModel, "file:///Zombie.cs", new Position(zLine, zCol));
+        Assert.NotEmpty(decls);
+        Assert.Equal("file:///IDamageable.cs", decls[0].Uri);
+    }
+
+    [Fact]
+    public void TypeDefinitionResolvesClassFromVariable()
+    {
+        const string playerCode = "public class Warrior { public int Power; }";
+        var pSnap = CsffSyntaxAdapter.Parse(playerCode);
+        var index = new SymbolIndex();
+        index.UpdateFileSymbols("file:///Warrior.cs", SymbolExtractor.ExtractSymbols("file:///Warrior.cs", pSnap));
+
+        const string usageCode = """
+            public class Game
+            {
+                void Start()
+                {
+                    Warrior w = new Warrior();
+                    w.Power = 10;
+                }
+            }
+            """;
+        var uSnap = CsffSyntaxAdapter.Parse(usageCode);
+        index.UpdateFileSymbols("file:///Game.cs", SymbolExtractor.ExtractSymbols("file:///Game.cs", uSnap));
+        var model = new DocumentSemanticModel(uSnap, index);
+
+        int varOffset = usageCode.IndexOf("w.Power", StringComparison.Ordinal);
+        var (line, col) = uSnap.Lines.GetPosition(varOffset);
+        var typeDefs = ScopedResolver.ResolveTypeDefinition(model, "file:///Game.cs", new Position(line, col));
+        Assert.NotEmpty(typeDefs);
+        Assert.Equal("file:///Warrior.cs", typeDefs[0].Uri);
+    }
+
+    [Fact]
+    public void ReferencesFindsAllUsages()
+    {
+        const string code = """
+            public class TestRefs
+            {
+                private int _score;
+                void Add()
+                {
+                    _score = 10;
+                }
+                int Get() => _score;
+            }
+            """;
+        var snap = CsffSyntaxAdapter.Parse(code);
+        var index = new SymbolIndex();
+        index.UpdateFileSymbols("file:///TestRefs.cs", SymbolExtractor.ExtractSymbols("file:///TestRefs.cs", snap));
+        var model = new DocumentSemanticModel(snap, index);
+
+        int offset = code.IndexOf("_score = 10", StringComparison.Ordinal);
+        var (line, col) = snap.Lines.GetPosition(offset);
+        var refs = ScopedResolver.ResolveReferences(model, "file:///TestRefs.cs", new Position(line, col), includeDeclaration: true);
+        Assert.Equal(3, refs.Count); // declaration + 2 usages
+    }
 }

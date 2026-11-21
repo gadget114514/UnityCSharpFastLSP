@@ -78,6 +78,18 @@ public sealed class LspServer
                     HandleDefinition(id, parameters);
                     break;
 
+                case "textDocument/declaration":
+                    HandleDeclaration(id, parameters);
+                    break;
+
+                case "textDocument/implementation":
+                    HandleImplementation(id, parameters);
+                    break;
+
+                case "textDocument/typeDefinition":
+                    HandleTypeDefinition(id, parameters);
+                    break;
+
                 case "textDocument/references":
                     HandleReferences(id, parameters);
                     break;
@@ -274,22 +286,82 @@ public sealed class LspServer
         _writer.WriteRawResponse(id, "[]"u8.ToArray());
     }
 
-    private void HandleReferences(object? id, JsonElement parameters)
+    private void HandleDeclaration(object? id, JsonElement parameters)
     {
-        var @params = JsonSerializer.Deserialize(parameters, LspJsonSerializerContext.Default.TextDocumentPositionParams);
+        var @params = JsonSerializer.Deserialize(parameters, LspJsonSerializerContext.Default.DeclarationParams);
         if (@params != null)
         {
             var snapshot = _state.GetOrLoadDocument(@params.TextDocument.Uri);
             if (snapshot != null)
             {
                 var model = new DocumentSemanticModel(snapshot, _state.SymbolIndex);
-                string? word = model.GetWordAtPosition(@params.Position);
-                if (!string.IsNullOrEmpty(word))
+                var locations = ScopedResolver.ResolveDeclaration(model, @params.TextDocument.Uri, @params.Position);
+                if (locations.Count > 0)
                 {
-                    var locations = _state.SymbolIndex.FindReferences(word);
                     _writer.WriteResponse(id, locations, LspJsonSerializerContext.Default.ListLocation);
                     return;
                 }
+            }
+        }
+
+        _writer.WriteRawResponse(id, "[]"u8.ToArray());
+    }
+
+    private void HandleImplementation(object? id, JsonElement parameters)
+    {
+        var @params = JsonSerializer.Deserialize(parameters, LspJsonSerializerContext.Default.ImplementationParams);
+        if (@params != null)
+        {
+            var snapshot = _state.GetOrLoadDocument(@params.TextDocument.Uri);
+            if (snapshot != null)
+            {
+                var model = new DocumentSemanticModel(snapshot, _state.SymbolIndex);
+                var locations = ScopedResolver.ResolveImplementation(model, @params.TextDocument.Uri, @params.Position);
+                if (locations.Count > 0)
+                {
+                    _writer.WriteResponse(id, locations, LspJsonSerializerContext.Default.ListLocation);
+                    return;
+                }
+            }
+        }
+
+        _writer.WriteRawResponse(id, "[]"u8.ToArray());
+    }
+
+    private void HandleTypeDefinition(object? id, JsonElement parameters)
+    {
+        var @params = JsonSerializer.Deserialize(parameters, LspJsonSerializerContext.Default.TypeDefinitionParams);
+        if (@params != null)
+        {
+            var snapshot = _state.GetOrLoadDocument(@params.TextDocument.Uri);
+            if (snapshot != null)
+            {
+                var model = new DocumentSemanticModel(snapshot, _state.SymbolIndex);
+                var locations = ScopedResolver.ResolveTypeDefinition(model, @params.TextDocument.Uri, @params.Position);
+                if (locations.Count > 0)
+                {
+                    _writer.WriteResponse(id, locations, LspJsonSerializerContext.Default.ListLocation);
+                    return;
+                }
+            }
+        }
+
+        _writer.WriteRawResponse(id, "[]"u8.ToArray());
+    }
+
+    private void HandleReferences(object? id, JsonElement parameters)
+    {
+        var @params = JsonSerializer.Deserialize(parameters, LspJsonSerializerContext.Default.ReferenceParams);
+        if (@params != null)
+        {
+            var snapshot = _state.GetOrLoadDocument(@params.TextDocument.Uri);
+            if (snapshot != null)
+            {
+                var model = new DocumentSemanticModel(snapshot, _state.SymbolIndex);
+                bool includeDecl = @params.Context?.IncludeDeclaration ?? true;
+                var locations = ScopedResolver.ResolveReferences(model, @params.TextDocument.Uri, @params.Position, includeDecl);
+                _writer.WriteResponse(id, locations, LspJsonSerializerContext.Default.ListLocation);
+                return;
             }
         }
 

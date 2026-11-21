@@ -191,15 +191,43 @@ public sealed record ServerInfo(
 
 public sealed record ServerCapabilities(
     [property: JsonPropertyName("textDocumentSync")] int TextDocumentSync,
-    [property: JsonPropertyName("hoverProvider")] bool HoverProvider,
-    [property: JsonPropertyName("completionProvider")] CompletionOptions? CompletionProvider,
-    [property: JsonPropertyName("definitionProvider")] bool DefinitionProvider,
-    [property: JsonPropertyName("referencesProvider")] bool ReferencesProvider,
-    [property: JsonPropertyName("documentSymbolProvider")] bool DocumentSymbolProvider,
+    [property: JsonPropertyName("hoverProvider")] bool HoverProvider = true,
+    [property: JsonPropertyName("completionProvider")] CompletionOptions? CompletionProvider = null,
+    [property: JsonPropertyName("definitionProvider")] bool DefinitionProvider = true,
+    [property: JsonPropertyName("declarationProvider")] bool DeclarationProvider = true,
+    [property: JsonPropertyName("implementationProvider")] bool ImplementationProvider = true,
+    [property: JsonPropertyName("typeDefinitionProvider")] bool TypeDefinitionProvider = true,
+    [property: JsonPropertyName("referencesProvider")] bool ReferencesProvider = true,
+    [property: JsonPropertyName("documentSymbolProvider")] bool DocumentSymbolProvider = true,
     [property: JsonPropertyName("documentFormattingProvider")] bool DocumentFormattingProvider = true,
     [property: JsonPropertyName("signatureHelpProvider")] SignatureHelpOptions? SignatureHelpProvider = null,
     [property: JsonPropertyName("semanticTokensProvider")] SemanticTokensOptions? SemanticTokensProvider = null,
     [property: JsonPropertyName("documentHighlightProvider")] bool DocumentHighlightProvider = true
+);
+
+public sealed record ReferenceContext(
+    [property: JsonPropertyName("includeDeclaration")] bool IncludeDeclaration = true
+);
+
+public sealed record ReferenceParams(
+    [property: JsonPropertyName("textDocument")] TextDocumentIdentifier TextDocument,
+    [property: JsonPropertyName("position")] Position Position,
+    [property: JsonPropertyName("context")] ReferenceContext Context = default!
+);
+
+public sealed record DeclarationParams(
+    [property: JsonPropertyName("textDocument")] TextDocumentIdentifier TextDocument,
+    [property: JsonPropertyName("position")] Position Position
+);
+
+public sealed record ImplementationParams(
+    [property: JsonPropertyName("textDocument")] TextDocumentIdentifier TextDocument,
+    [property: JsonPropertyName("position")] Position Position
+);
+
+public sealed record TypeDefinitionParams(
+    [property: JsonPropertyName("textDocument")] TextDocumentIdentifier TextDocument,
+    [property: JsonPropertyName("position")] Position Position
 );
 
 public sealed record SignatureHelpOptions(

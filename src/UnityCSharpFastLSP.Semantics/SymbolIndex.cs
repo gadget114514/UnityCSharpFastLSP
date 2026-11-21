@@ -11,6 +11,7 @@ public sealed class SymbolIndex
     private readonly ConcurrentDictionary<int, HashSet<int>> _nameIdToSymbolIds = new();
     private readonly ConcurrentDictionary<int, HashSet<int>> _containingTypeToSymbolIds = new();
     private readonly ConcurrentDictionary<string, List<string>> _typeToBaseTypes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, HashSet<string>> _baseToDerivedTypes = new(StringComparer.OrdinalIgnoreCase);
     private int _nextSymbolId = 1;
 
     public SymbolStringTable StringTable => _stringTable;
@@ -76,6 +77,14 @@ public sealed class SymbolIndex
             if (sym.BaseTypes != null && sym.BaseTypes.Count > 0)
             {
                 _typeToBaseTypes[sym.Name] = new List<string>(sym.BaseTypes);
+                foreach (var b in sym.BaseTypes)
+                {
+                    var dSet = _baseToDerivedTypes.GetOrAdd(b, _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                    lock (dSet)
+                    {
+                        dSet.Add(sym.Name);
+                    }
+                }
             }
         }
 
@@ -193,6 +202,75 @@ public sealed class SymbolIndex
         }
 
         return result;
+    }
+
+    public List<Location> FindImplementations(string symbolName)
+    {
+        var results = new List<Location>();
+
+        // 1. symbolName がインターフェースまたは基底クラスの場合:
+        // それを継承・実装しているクラスの定義位置を返す
+        if (_baseToDerivedTypes.TryGetValue(symbolName, out var derivedNames))
+        {
+            List<string> dList;
+            lock (derivedNames)
+            {
+                dList = new List<string>(derivedNames);
+            }
+            foreach (var dName in dList)
+            {
+                results.AddRange(FindDefinitions(dName));
+            }
+        }
+
+        // 2. symbolName がインターフェースや基底クラス内のメンバーの場合:
+        // その実装先クラスから同名メンバーを探す
+        var matchingSymbols = FindSymbolsByName(symbolName);
+        foreach (var sym in matchingSymbols)
+        {
+            if (!string.IsNullOrEmpty(sym.ContainingType) &&
+                _baseToDerivedTypes.TryGetValue(sym.ContainingType, out var implementors))
+            {
+                List<string> impList;
+                lock (implementors)
+                {
+                    impList = new List<string>(implementors);
+                }
+                foreach (var imp in impList)
+                {
+                    var impMembers = FindMembersByContainingType(imp);
+                    foreach (var m in impMembers.Where(m => m.Name == symbolName))
+                    {
+                        results.Add(new Location(m.Uri, m.Range));
+                    }
+                }
+            }
+        }
+
+        return results;
+    }
+
+    public List<Location> FindDeclarations(string symbolName)
+    {
+        var matchingSymbols = FindSymbolsByName(symbolName);
+        foreach (var sym in matchingSymbols)
+        {
+            if (!string.IsNullOrEmpty(sym.ContainingType))
+            {
+                var baseTypes = GetAllBaseTypes(sym.ContainingType);
+                foreach (var baseType in baseTypes)
+                {
+                    var baseMembers = FindMembersByContainingType(baseType);
+                    var matched = baseMembers.Where(m => m.Name == symbolName).ToList();
+                    if (matched.Count > 0)
+                    {
+                        return matched.Select(m => new Location(m.Uri, m.Range)).ToList();
+                    }
+                }
+            }
+        }
+
+        return FindDefinitions(symbolName);
     }
 
     public int SymbolCount => _symbolsById.Count;

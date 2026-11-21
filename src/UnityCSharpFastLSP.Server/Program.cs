@@ -15,9 +15,11 @@ MODES:
   (default)        Run as LSP server over stdio (JSON-RPC 2.0). Normal mode for editors and AI agents.
 
 OPTIONS:
-  --stdio          Use standard input/output for LSP JSON-RPC communication (default: true).
-  --print-config   Print LLM agent LSP configuration snippet (opencode.json format) to stdout and exit.
-  -h, --help       Show this help and exit.
+  --stdio              Use standard input/output for LSP JSON-RPC communication (default: true).
+  --proxy              Enable Intelligent Proxy mode (auto-detects and forwards heavy Roslyn requests to UnityCSharpLSP).
+  --upstream <path>    Explicit path to upstream Roslyn LSP server (e.g. UnityCSharpLSP.Server.exe).
+  --print-config       Print LLM agent LSP configuration snippet (opencode.json format) to stdout and exit.
+  -h, --help           Show this help and exit.
 
 LLM / AI AGENT INTEGRATION (OpenCode, Claude Code, Antigravity, Cursor):
   To register this fast LSP server with OpenCode, add to your opencode.json:
@@ -66,15 +68,36 @@ $$"""
         using var input = Console.OpenStandardInput();
         using var output = Console.OpenStandardOutput();
 
-        Console.Error.WriteLine("UnityCSharpFastLSP.Server: initialized (Phase 1-3 Fast Server)");
-
-        var server = new LspServer(output);
-
-        while (LspMessageReader.TryReadMessage(input, out byte[]? message))
+        bool isProxy = args.Contains("--proxy") || args.Any(a => a.StartsWith("--upstream"));
+        string? upstreamPath = null;
+        int uIdx = Array.IndexOf(args, "--upstream");
+        if (uIdx >= 0 && uIdx + 1 < args.Length)
         {
-            if (message is null || !server.HandleMessage(message))
+            upstreamPath = args[uIdx + 1];
+        }
+
+        if (isProxy)
+        {
+            Console.Error.WriteLine("UnityCSharpFastLSP.Server: Running in Intelligent Proxy mode");
+            using var proxy = new LspProxy(output, upstreamPath);
+            while (LspMessageReader.TryReadMessage(input, out byte[]? message))
             {
-                break;
+                if (message is null || !proxy.HandleClientMessage(message))
+                {
+                    break;
+                }
+            }
+        }
+        else
+        {
+            Console.Error.WriteLine("UnityCSharpFastLSP.Server: initialized (Standalone Ultra-Fast Mode)");
+            var server = new LspServer(output);
+            while (LspMessageReader.TryReadMessage(input, out byte[]? message))
+            {
+                if (message is null || !server.HandleMessage(message))
+                {
+                    break;
+                }
             }
         }
 
