@@ -23,7 +23,7 @@ LLM / AI AGENT INTEGRATION (OpenCode, Claude Code, Antigravity, Cursor):
   To register this fast LSP server with OpenCode, add to your opencode.json:
     {
       ""lsp"": {
-        ""unity-csharp-fast"": {
+        ""unity-csharp-fast-2nek"": {
           ""command"": [""<path/to/UnityCSharpFastLSP.Server.exe>"", ""--stdio""],
           ""extensions"": ["".cs""]
         }
@@ -52,7 +52,7 @@ NOTES:
 $$"""
 {
   "lsp": {
-    "unity-csharp-fast": {
+    "unity-csharp-fast-2nek": {
       "command": ["{{exePath}}", "--stdio"],
       "extensions": [".cs"]
     }

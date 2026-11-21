@@ -7,7 +7,7 @@ Built on top of [csff](https://github.com/paq/csff) CST (Concrete Syntax Tree) a
 
 ## Overview
 
-Traditional Roslyn-based C# language servers (`OmniSharp`, `csharp-ls`) incur noticeable latency spikes (10–50 ms per request), high memory footprints, and heavy compilation pauses when navigating large Unity projects with numerous assemblies and package caches.
+Traditional Roslyn-based C# language servers (`UnityCSharpLSP`, `csharp-ls`, `OmniSharp`) incur noticeable latency spikes (10–50 ms per request), high memory footprints, and heavy compilation pauses when navigating large Unity projects with numerous assemblies and package caches.
 
 **UnityCSharpFastLSP** is engineered to eliminate editing friction:
 - **Sub-Millisecond Response Time**: Warm per-request latency of **~0.15 ms for completion** and **~0.10 ms for hover** in real stdio IPC (**~90x faster** than Roslyn baseline).
@@ -119,7 +119,7 @@ Output:
 ```json
 {
   "lsp": {
-    "unity-csharp-fast": {
+    "unity-csharp-fast-2nek": {
       "command": ["D:/path/to/UnityCSharpFastLSP.Server.exe", "--stdio"],
       "extensions": [".cs"]
     }

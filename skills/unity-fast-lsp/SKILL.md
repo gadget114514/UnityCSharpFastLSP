@@ -35,7 +35,7 @@ UnityCSharpFastLSP.Server.exe --print-config
 ```json
 {
   "lsp": {
-    "unity-csharp-fast": {
+    "unity-csharp-fast-2nek": {
       "command": ["<path/to/UnityCSharpFastLSP.Server.exe>", "--stdio"],
       "extensions": [".cs"]
     }
