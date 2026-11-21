@@ -36,7 +36,7 @@ INTELLIGENT HYBRID PROXY PRIORITY:
   Upstream Server Discovery:
     1. Explicit path passed to --upstream <path>
     2. Environment variable UNITY_CSHARP_LSP_PATH
-    3. OS API PATH search (Windows SearchPath API for UnityCSharpLSP.Server.exe, UnityCSharpLSP.exe, csharp-ls.exe)
+    3. OS PATH resolution (OS searches PATH for UnityCSharpLSP.Server.exe, UnityCSharpLSP.exe)
     4. Standard installation directories (%LOCALAPPDATA%\Programs\UnityCSharpLSP, etc.)
     5. FAILED -> Terminates immediately with error code 1 if upstream is not found.
 

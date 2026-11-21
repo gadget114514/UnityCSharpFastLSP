@@ -153,7 +153,7 @@ OPTIONS:
                        - Supported features are answered immediately by FastLSP (<0.3ms).
                        - Unhandled heavy requests are forwarded to upstream Roslyn server.
                        - Upstream discovery: 1) --upstream, 2) UNITY_CSHARP_LSP_PATH,
-                         3) OS API PATH search, 4) Standard directories. (5: Fails with error).
+                         3) OS PATH resolution, 4) Standard directories. (5: Fails with error).
   --upstream <path>    Explicit path to upstream Roslyn LSP server (e.g. UnityCSharpLSP.Server.exe).
                        If omitted with --proxy, automatically searches following priority 2 -> 3 -> 4.
   --print-config       Print LLM agent LSP configuration snippet (opencode.json format) to stdout and exit.
@@ -167,7 +167,7 @@ OPTIONS:
 2. **Upstream Server Discovery Order**:
    1. Explicit path: `--upstream <path>`
    2. Environment variable: `UNITY_CSHARP_LSP_PATH`
-   3. OS API PATH search: Windows `SearchPath` API (`UnityCSharpLSP.Server.exe`, `UnityCSharpLSP.exe`, `csharp-ls.exe`)
+   3. OS PATH resolution: OS searches PATH for `UnityCSharpLSP.Server.exe` or `UnityCSharpLSP.exe`
    4. Standard installation directories (`%LOCALAPPDATA%\Programs\UnityCSharpLSP`, etc.)
    5. **FAILED**: If no upstream server is found, terminates immediately with error code 1.
 

@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using System.Runtime.InteropServices;
-using System.Text;
 using System.Text.Json;
 using UnityCSharpFastLSP.Protocol;
 
@@ -36,50 +34,12 @@ public sealed class LspProxy : IDisposable
         _clientOutput = clientOutput;
         _fastServer = new LspServer(clientOutput);
 
-        string? resolvedPath = ResolveUpstreamPath(upstreamExecutablePath);
-        if (string.IsNullOrEmpty(resolvedPath) || !File.Exists(resolvedPath))
-        {
-            throw new FileNotFoundException(
-                "Upstream Roslyn LSP server was not found.\n" +
-                "Exploration order:\n" +
-                "  1. Explicit argument (--upstream <path>)\n" +
-                "  2. Environment variable (UNITY_CSHARP_LSP_PATH)\n" +
-                "  3. PATH environment variable auto-discovery (UnityCSharpLSP.Server.exe, UnityCSharpLSP.exe, csharp-ls.exe)\n" +
-                "  4. Standard installation directories (%LOCALAPPDATA%\\Programs\\UnityCSharpLSP, etc.)\n" +
-                "  5. FAILED: No upstream server found. Please ensure UnityCSharpLSP is on PATH or specify --upstream <path>."
-            );
-        }
+        _upstreamProcess = StartUpstreamProcess(upstreamExecutablePath);
+        _upstreamInput = _upstreamProcess.StandardInput;
 
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = resolvedPath,
-                Arguments = "--stdio",
-                UseShellExecute = false,
-                RedirectStandardInput = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-
-            _upstreamProcess = Process.Start(psi);
-            if (_upstreamProcess == null)
-            {
-                throw new InvalidOperationException($"Failed to launch upstream process: {resolvedPath}");
-            }
-
-            _upstreamInput = _upstreamProcess.StandardInput;
-            Console.Error.WriteLine($"LspProxy: Connected to upstream Roslyn server: {resolvedPath}");
-
-            // Upstream の出力を非同期に読み取りクライアントに転送
-            Task.Run(() => ReadUpstreamLoop(_upstreamProcess.StandardOutput.BaseStream, _cts.Token));
-            Task.Run(() => ReadUpstreamStderrLoop(_upstreamProcess.StandardError, _cts.Token));
-        }
-        catch (Exception ex) when (ex is not FileNotFoundException)
-        {
-            throw new InvalidOperationException($"LspProxy: Failed to start upstream server '{resolvedPath}': {ex.Message}", ex);
-        }
+        // Upstream の出力を非同期に読み取りクライアントに転送
+        Task.Run(() => ReadUpstreamLoop(_upstreamProcess.StandardOutput.BaseStream, _cts.Token));
+        Task.Run(() => ReadUpstreamStderrLoop(_upstreamProcess.StandardError, _cts.Token));
     }
 
     public bool HandleClientMessage(byte[] message)
@@ -203,75 +163,72 @@ public sealed class LspProxy : IDisposable
         }
     }
 
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    private static extern uint SearchPath(
-        string? lpPath,
-        string lpFileName,
-        string? lpExtension,
-        int nBufferLength,
-        StringBuilder lpBuffer,
-        out IntPtr lpFilePart
-    );
-
-    private static string? SearchInPathUsingOsApi(string fileName)
+    private static Process StartUpstreamProcess(string? explicitPath)
     {
-        if (OperatingSystem.IsWindows())
-        {
-            var sb = new StringBuilder(1024);
-            uint len = SearchPath(null, fileName, null, sb.Capacity, sb, out _);
-            if (len > 0 && len < sb.Capacity)
-            {
-                return sb.ToString();
-            }
-        }
-        return null;
-    }
+        var candidates = new List<string>();
 
-    private static string? ResolveUpstreamPath(string? explicitPath)
-    {
         // 1. コマンドライン引数 (--upstream <path>)
-        if (!string.IsNullOrEmpty(explicitPath) && File.Exists(explicitPath))
+        if (!string.IsNullOrWhiteSpace(explicitPath))
         {
-            return Path.GetFullPath(explicitPath);
+            candidates.Add(explicitPath);
         }
 
         // 2. 環境変数 UNITY_CSHARP_LSP_PATH
         string env = Environment.GetEnvironmentVariable("UNITY_CSHARP_LSP_PATH") ?? "";
-        if (!string.IsNullOrEmpty(env) && File.Exists(env))
+        if (!string.IsNullOrWhiteSpace(env))
         {
-            return Path.GetFullPath(env);
+            candidates.Add(env);
         }
 
-        // 3. OS の API (SearchPath) による PATH 自動探索
-        string[] targetNames = OperatingSystem.IsWindows()
-            ? ["UnityCSharpLSP.Server.exe", "UnityCSharpLSP.exe", "csharp-ls.exe"]
-            : ["UnityCSharpLSP.Server", "UnityCSharpLSP", "csharp-ls"];
+        // 3. 実行ファイル名 (PATH探索はOSに任せる)
+        candidates.Add("UnityCSharpLSP.Server.exe");
+        candidates.Add("UnityCSharpLSP.exe");
+        candidates.Add("UnityCSharpLSP.Server");
+        candidates.Add("UnityCSharpLSP");
 
-        foreach (var name in targetNames)
+        // 4. 標準インストール先ディレクトリのフォールバック
+        candidates.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Programs\UnityCSharpLSP\UnityCSharpLSP.Server.exe"));
+        candidates.Add(@"D:\wsgit\UnityCSharpLSP\artifacts\publish\UnityCSharpLSP.Server.exe");
+
+        foreach (var cmd in candidates)
         {
-            string? found = SearchInPathUsingOsApi(name);
-            if (!string.IsNullOrEmpty(found) && File.Exists(found))
+            try
             {
-                return Path.GetFullPath(found);
+                var psi = new ProcessStartInfo
+                {
+                    FileName = cmd,
+                    Arguments = "--stdio",
+                    UseShellExecute = false,
+                    RedirectStandardInput = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+
+                var proc = Process.Start(psi);
+                if (proc != null && !proc.HasExited)
+                {
+                    Console.Error.WriteLine($"LspProxy: Successfully spawned upstream Roslyn server: {cmd}");
+                    return proc;
+                }
+            }
+            catch (Exception)
+            {
+                // OS が PATH または指定パスから実行可能ファイルを見つけられなかった場合、次の候補へ
+                continue;
             }
         }
 
-        // 4. 標準インストール先ディレクトリのフォールバック
-        string[] standardCandidates =
-        [
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Programs\UnityCSharpLSP\UnityCSharpLSP.Server.exe"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"UnityCSharpLSP\UnityCSharpLSP.Server.exe"),
-            @"D:\wsgit\UnityCSharpLSP\artifacts\publish\UnityCSharpLSP.Server.exe",
-            @"D:\wsgit\UnityCSharpLSP\src\UnityCSharpLSP.Server\bin\Release\net8.0\UnityCSharpLSP.Server.exe"
-        ];
-
-        foreach (var c in standardCandidates)
-        {
-            if (File.Exists(c)) return Path.GetFullPath(c);
-        }
-
-        // 5. 見つからない場合は null (コンストラクタ側でエラー終了)
-        return null;
+        // 5. すべて見つからなかった場合はエラー終了
+        throw new InvalidOperationException(
+            "Upstream Roslyn LSP server could not be started.\n" +
+            "Priority order checked:\n" +
+            "  1. Explicit argument (--upstream <path>)\n" +
+            "  2. Environment variable (UNITY_CSHARP_LSP_PATH)\n" +
+            "  3. OS PATH resolution (UnityCSharpLSP.Server.exe, UnityCSharpLSP.exe)\n" +
+            "  4. Standard installation directories (%LOCALAPPDATA%\\Programs\\UnityCSharpLSP, etc.)\n" +
+            "  5. FAILED: No upstream server could be executed. Please ensure UnityCSharpLSP is in PATH or specify --upstream <path>."
+        );
     }
 
     public void Dispose()
