@@ -243,8 +243,9 @@ public class DocLspTestScenarioTests : IDisposable
         proc.WaitForExit(30000);
 
         Assert.Equal(0, proc.ExitCode);
-        Assert.Contains("PASS capabilityUI (same file)", stdOut);
-        Assert.Contains("PASS ShowCapabilitiesUI (other file)", stdOut);
+        // lsp_def_test.py は "  [PASS] <名前>: ..." の形式で出力する
+        Assert.Contains("[PASS] capabilityUI", stdOut);
+        Assert.Contains("[PASS] ShowCapabilitiesUI", stdOut);
     }
 
     private static string MakeDidOpen(string uri, string text)

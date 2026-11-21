@@ -13,6 +13,10 @@ public sealed class LspServer
     private bool _isShutdown;
     private bool _isInitialized;
 
+    // 定義ジャンプ系の要求は、ワークスペースのインデックス完了を待ってから解決する。
+    // 大規模プロジェクトでは初回インデックスに時間がかかるため、上限付きで待つ。
+    private static readonly TimeSpan IndexWaitTimeout = TimeSpan.FromSeconds(30);
+
     public LspServer(Stream output, bool isProxy = false)
     {
         _writer = new LspMessageWriter(output);
@@ -208,6 +212,11 @@ public sealed class LspServer
         {
             Task.Run(() => _state.WorkspaceManager.IndexWorkspace(rootPath));
         }
+        else
+        {
+            // インデックス対象が無いので、待機している定義要求をすぐ解放する
+            _state.WorkspaceManager.MarkIndexReady();
+        }
 
         var result = new InitializeResult(
             Capabilities: new ServerCapabilities(
@@ -333,6 +342,7 @@ public sealed class LspServer
 
     private void HandleDefinition(object? id, JsonElement parameters)
     {
+        _state.WorkspaceManager.WaitForIndex(IndexWaitTimeout);
         var @params = JsonSerializer.Deserialize(parameters, LspJsonSerializerContext.Default.TextDocumentPositionParams);
         if (@params != null)
         {
@@ -354,6 +364,7 @@ public sealed class LspServer
 
     private void HandleDeclaration(object? id, JsonElement parameters)
     {
+        _state.WorkspaceManager.WaitForIndex(IndexWaitTimeout);
         var @params = JsonSerializer.Deserialize(parameters, LspJsonSerializerContext.Default.DeclarationParams);
         if (@params != null)
         {
@@ -375,6 +386,7 @@ public sealed class LspServer
 
     private void HandleImplementation(object? id, JsonElement parameters)
     {
+        _state.WorkspaceManager.WaitForIndex(IndexWaitTimeout);
         var @params = JsonSerializer.Deserialize(parameters, LspJsonSerializerContext.Default.ImplementationParams);
         if (@params != null)
         {
@@ -396,6 +408,7 @@ public sealed class LspServer
 
     private void HandleTypeDefinition(object? id, JsonElement parameters)
     {
+        _state.WorkspaceManager.WaitForIndex(IndexWaitTimeout);
         var @params = JsonSerializer.Deserialize(parameters, LspJsonSerializerContext.Default.TypeDefinitionParams);
         if (@params != null)
         {
@@ -417,6 +430,7 @@ public sealed class LspServer
 
     private void HandleReferences(object? id, JsonElement parameters)
     {
+        _state.WorkspaceManager.WaitForIndex(IndexWaitTimeout);
         var @params = JsonSerializer.Deserialize(parameters, LspJsonSerializerContext.Default.ReferenceParams);
         if (@params != null)
         {

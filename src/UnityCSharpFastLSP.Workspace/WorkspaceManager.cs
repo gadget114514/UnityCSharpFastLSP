@@ -9,6 +9,16 @@ public sealed class WorkspaceManager
 {
     private readonly SymbolIndex _symbolIndex;
     private readonly ConcurrentDictionary<string, string> _filePaths = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ManualResetEventSlim _indexReady = new(false);
+
+    /// <summary>ワークスペースのインデックス作成が完了したか。</summary>
+    public bool IsIndexReady => _indexReady.IsSet;
+
+    /// <summary>インデックス完了まで最大 timeout 待つ。完了していれば即座に true。</summary>
+    public bool WaitForIndex(TimeSpan timeout) => _indexReady.Wait(timeout);
+
+    /// <summary>インデックス対象が無い（rootPath なし）場合に、準備完了として扱う。</summary>
+    public void MarkIndexReady() => _indexReady.Set();
 
     public WorkspaceManager(SymbolIndex symbolIndex)
     {
@@ -16,6 +26,19 @@ public sealed class WorkspaceManager
     }
 
     public int IndexWorkspace(string rootPath)
+    {
+        try
+        {
+            return IndexWorkspaceCore(rootPath);
+        }
+        finally
+        {
+            // 成功・失敗・対象なしのいずれでも、待機中の要求を解放する
+            _indexReady.Set();
+        }
+    }
+
+    private int IndexWorkspaceCore(string rootPath)
     {
         if (string.IsNullOrEmpty(rootPath) || !Directory.Exists(rootPath))
         {
