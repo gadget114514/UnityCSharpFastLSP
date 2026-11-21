@@ -306,4 +306,172 @@ public class Phase1To3IntegrationTests
         Assert.Contains(completions.Items, c => c.Label == "Roar");
         Assert.DoesNotContain(completions.Items, c => c.Label == "Fight");
     }
+
+    [Fact]
+    public void DefinitionJumpResolvesLocalAndCrossFileTargets()
+    {
+        var bossCode = "public class Boss { public void Roar() {} }";
+        var bossSnap = CsffSyntaxAdapter.Parse(bossCode);
+        var index = new SymbolIndex();
+        index.UpdateFileSymbols("file:///Boss.cs", SymbolExtractor.ExtractSymbols("file:///Boss.cs", bossSnap));
+
+        const string code = """
+            public class Arena
+            {
+                void Start()
+                {
+                    var boss = new Boss();
+                    boss.Roar();
+                }
+            }
+            """;
+        var snap = CsffSyntaxAdapter.Parse(code);
+        index.UpdateFileSymbols("file:///Arena.cs", SymbolExtractor.ExtractSymbols("file:///Arena.cs", snap));
+        var model = new DocumentSemanticModel(snap, index);
+
+        // 1. Definition jump on local var 'boss' in boss.Roar()
+        int bossUsageOffset = code.IndexOf("boss.Roar", StringComparison.Ordinal);
+        var (bLine, bCol) = snap.Lines.GetPosition(bossUsageOffset);
+        var bossDefs = ScopedResolver.ResolveScopedDefinition(model, "file:///Arena.cs", new Position(bLine, bCol));
+        Assert.NotEmpty(bossDefs);
+        // Must point to 'var boss = new Boss()' declaration line
+        int bossDeclOffset = code.IndexOf("boss = new", StringComparison.Ordinal);
+        var (declLine, declCol) = snap.Lines.GetPosition(bossDeclOffset);
+        Assert.Equal(declLine, bossDefs[0].Range.Start.Line);
+
+        // 2. Definition jump on 'Roar' in boss.Roar()
+        int roarUsageOffset = code.IndexOf("Roar", StringComparison.Ordinal);
+        var (rLine, rCol) = snap.Lines.GetPosition(roarUsageOffset);
+        var roarDefs = ScopedResolver.ResolveScopedDefinition(model, "file:///Arena.cs", new Position(rLine, rCol));
+        Assert.NotEmpty(roarDefs);
+        Assert.Equal("file:///Boss.cs", roarDefs[0].Uri);
+    }
+
+    [Fact]
+    public void InheritanceHierarchyMergesBaseMembers()
+    {
+        const string baseCode = """
+            public class Character
+            {
+                public int MaxHp;
+                public void Heal() {}
+            }
+            """;
+        var baseSnap = CsffSyntaxAdapter.Parse(baseCode);
+        var index = new SymbolIndex();
+        index.UpdateFileSymbols("file:///Character.cs", SymbolExtractor.ExtractSymbols("file:///Character.cs", baseSnap));
+
+        const string playerCode = """
+            public class Hero : Character
+            {
+                public int Level;
+            }
+            """;
+        var playerSnap = CsffSyntaxAdapter.Parse(playerCode);
+        index.UpdateFileSymbols("file:///Hero.cs", SymbolExtractor.ExtractSymbols("file:///Hero.cs", playerSnap));
+
+        const string testCode = """
+            public class Main
+            {
+                void Run()
+                {
+                    Hero hero = new Hero();
+                    hero.
+                }
+            }
+            """;
+        var testSnap = CsffSyntaxAdapter.Parse(testCode);
+        var model = new DocumentSemanticModel(testSnap, index);
+
+        int dotOffset = testCode.IndexOf("hero.", StringComparison.Ordinal) + "hero.".Length;
+        var (line, col) = testSnap.Lines.GetPosition(dotOffset);
+
+        var completions = CompletionProvider.GetCompletions(model, new Position(line, col));
+        Assert.NotNull(completions);
+        // Derived member
+        Assert.Contains(completions.Items, c => c.Label == "Level");
+        // Base class members
+        Assert.Contains(completions.Items, c => c.Label == "MaxHp");
+        Assert.Contains(completions.Items, c => c.Label == "Heal");
+    }
+
+    [Fact]
+    public void UnityApiDictionaryProvidesInstantMembers()
+    {
+        const string code = """
+            public class TestUnity
+            {
+                void Update()
+                {
+                    transform.
+                }
+            }
+            """;
+        var snap = CsffSyntaxAdapter.Parse(code);
+        var index = new SymbolIndex();
+        var model = new DocumentSemanticModel(snap, index);
+
+        int dotOffset = code.IndexOf("transform.", StringComparison.Ordinal) + "transform.".Length;
+        var (line, col) = snap.Lines.GetPosition(dotOffset);
+
+        var completions = CompletionProvider.GetCompletions(model, new Position(line, col));
+        Assert.NotNull(completions);
+        Assert.Contains(completions.Items, c => c.Label == "position");
+        Assert.Contains(completions.Items, c => c.Label == "Translate");
+        Assert.Contains(completions.Items, c => c.Label == "LookAt");
+    }
+
+    [Fact]
+    public void SignatureHelpReturnsMethodParameters()
+    {
+        const string code = """
+            public class Calc
+            {
+                public void Add(int a, int b) {}
+
+                void Test()
+                {
+                    Add(10, 
+                }
+            }
+            """;
+        var snap = CsffSyntaxAdapter.Parse(code);
+        var index = new SymbolIndex();
+        index.UpdateFileSymbols("file:///Calc.cs", SymbolExtractor.ExtractSymbols("file:///Calc.cs", snap));
+        var model = new DocumentSemanticModel(snap, index);
+
+        int offset = code.IndexOf("Add(10,", StringComparison.Ordinal) + "Add(10,".Length;
+        var (line, col) = snap.Lines.GetPosition(offset);
+
+        var help = SignatureHelpProvider.GetSignatureHelp(model, new Position(line, col));
+        Assert.NotNull(help);
+        Assert.NotEmpty(help.Signatures);
+        Assert.Equal(1, help.ActiveParameter); // Second parameter after comma
+    }
+
+    [Fact]
+    public void SemanticTokensReturnsEncodedTokens()
+    {
+        var snap = CsffSyntaxAdapter.Parse("public class MyClass { int _val = 42; }");
+        var tokens = SemanticTokensProvider.GetSemanticTokens(snap);
+
+        Assert.NotNull(tokens);
+        Assert.NotEmpty(tokens.Data);
+        Assert.True(tokens.Data.Count % 5 == 0); // 5 integers per token
+    }
+
+    [Fact]
+    public void DocumentHighlightReturnsAllOccurrences()
+    {
+        const string code = "public class A { int x = 1; void M() { x = 2; } }";
+        var snap = CsffSyntaxAdapter.Parse(code);
+        var index = new SymbolIndex();
+        var model = new DocumentSemanticModel(snap, index);
+
+        int offset = code.IndexOf("x = 1", StringComparison.Ordinal);
+        var (line, col) = snap.Lines.GetPosition(offset);
+
+        var highlights = DocumentHighlightProvider.GetHighlights(model, new Position(line, col));
+        Assert.Equal(2, highlights.Count);
+    }
 }

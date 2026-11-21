@@ -63,7 +63,7 @@ public sealed class LineMap
 
     public int GetOffset(int line, int character)
     {
-        if (line <= 0)
+        if (line < 0)
         {
             return 0;
         }
@@ -74,7 +74,7 @@ public sealed class LineMap
         }
 
         int start = _lineStarts[line];
-        int end = _lineStarts[line + 1];
+        int end = line + 1 < _lineStarts.Length ? _lineStarts[line + 1] : int.MaxValue;
         return Math.Min(start + Math.Max(0, character), end);
     }
 }

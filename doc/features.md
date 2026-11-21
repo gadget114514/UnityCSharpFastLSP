@@ -19,9 +19,12 @@ This document provides a comprehensive overview of supported Language Server Pro
 | `textDocument/documentSymbol` | Request | **Full** | Hierarchical document symbols (Namespace -> Class/Struct/Interface -> Methods/Properties/Fields/Enums) extracted from CST. |
 | `textDocument/hover` | Request | **Full** | Returns symbol signature, containing type, and Unity MonoBehaviour lifecycle documentation in Markdown. |
 | `textDocument/completion` | Request | **Full** | Provides dot-member filtering (`x.`) via lightweight type inference (`var x = new T()`, `T x`, `this.`, parameters, fields), Unity MonoBehaviour messages (13 methods with snippets), common Unity attributes (11 attributes), and workspace symbol names. |
-| `textDocument/definition` | Request | **Full** | Navigates to definition locations using atomic `SymbolIndex` dictionary lookup. |
+| `textDocument/definition` | Request | **Full** | Navigates to definition locations using scoped AST declaration check, containing-type member lookup, and atomic `SymbolIndex` dictionary lookup. Supports file auto-loading. |
 | `textDocument/references` | Request | **Full** | Finds symbol references and declarations across the workspace. |
 | `textDocument/formatting` | Request | **Full** | Fast bracket indentation and whitespace normalization (`FastFormatter`). |
+| `textDocument/signatureHelp` | Request | **Full** | Real-time parameter signatures and active parameter index tracking for methods (`(` and `,` triggers). |
+| `textDocument/semanticTokens/full` | Request | **Full** | Standard LSP delta-encoded semantic tokens for classes, structs, interfaces, enums, methods, properties, variables, keywords, strings, numbers, and comments. |
+| `textDocument/documentHighlight` | Request | **Full** | Fast document-wide identifier occurrence highlighting. |
 
 ---
 

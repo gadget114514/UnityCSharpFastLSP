@@ -12,5 +12,6 @@ public readonly record struct Symbol(
     ProtocolRange Range,
     string? Signature = null,
     string? ContainingType = null,
-    bool IsStatic = false
+    bool IsStatic = false,
+    IReadOnlyList<string>? BaseTypes = null
 );

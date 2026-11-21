@@ -10,6 +10,7 @@ public sealed class SymbolIndex
     private readonly ConcurrentDictionary<int, Symbol> _symbolsById = new();
     private readonly ConcurrentDictionary<int, HashSet<int>> _nameIdToSymbolIds = new();
     private readonly ConcurrentDictionary<int, HashSet<int>> _containingTypeToSymbolIds = new();
+    private readonly ConcurrentDictionary<string, List<string>> _typeToBaseTypes = new(StringComparer.OrdinalIgnoreCase);
     private int _nextSymbolId = 1;
 
     public SymbolStringTable StringTable => _stringTable;
@@ -70,6 +71,11 @@ public sealed class SymbolIndex
                 {
                     cSet.Add(id);
                 }
+            }
+
+            if (sym.BaseTypes != null && sym.BaseTypes.Count > 0)
+            {
+                _typeToBaseTypes[sym.Name] = new List<string>(sym.BaseTypes);
             }
         }
 
@@ -161,6 +167,32 @@ public sealed class SymbolIndex
         }
 
         return results;
+    }
+
+    public List<string> GetAllBaseTypes(string typeName)
+    {
+        var result = new List<string>();
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { typeName };
+        var queue = new Queue<string>();
+        queue.Enqueue(typeName);
+
+        while (queue.Count > 0)
+        {
+            var cur = queue.Dequeue();
+            if (_typeToBaseTypes.TryGetValue(cur, out var bases))
+            {
+                foreach (var b in bases)
+                {
+                    if (visited.Add(b))
+                    {
+                        result.Add(b);
+                        queue.Enqueue(b);
+                    }
+                }
+            }
+        }
+
+        return result;
     }
 
     public int SymbolCount => _symbolsById.Count;

@@ -37,12 +37,16 @@ For the full detailed benchmark methodology, in-process micro-benchmarks, and co
 - **[Feature Comparison vs UnityCSharpLSP](doc/feature-comparison.md)**: In-depth comparison with Roslyn-based UnityCSharpLSP and the practical value of FastLSP.
 - **[Performance Comparison Report](doc/performance-comparison.md)**: Benchmarks across in-process logic and real stdio IPC.
 
-- **LSP Methods**: `initialize`, `shutdown`, `exit`, `didOpen`, `didChange` (incremental/full), `didClose`, `publishDiagnostics`, `documentSymbol`, `hover`, `completion`, `definition`, `references`, `formatting`.
+- **LSP Methods**: `initialize`, `shutdown`, `exit`, `didOpen`, `didChange` (incremental/full), `didClose`, `publishDiagnostics`, `documentSymbol`, `hover`, `completion`, `definition`, `references`, `formatting`, `signatureHelp`, `semanticTokens/full`, `documentHighlight`.
 - **CST Syntax Diagnostics**: Instantaneous detection of incomplete syntax elements (`CSFF001`) and bad tokens (`CSFF002`).
 - **Hierarchical Document Symbols**: Fast extraction of Namespace -> Type -> Member symbol trees.
 - **Workspace Indexing**: Background parallel scanning of all `.cs` files across `Assets/` and `Packages/`.
 - **Scoping & Member Filtering**: Dot-member completion (`x.`) narrows candidates strictly to the inferred type's members instead of fuzzy token dumps.
-- **LLM Agent Ready**: Self-describing `--print-config` and `--help` for direct integration with AI coding agents.
+- **Class Inheritance Resolution**: Transitive traversal of base classes (`class Player : BaseCharacter`) merges base members into completions with 2–5 µs overhead.
+- **Pre-baked Unity API Dictionary**: In-memory dictionary for common Unity classes (`Transform`, `GameObject`, `Vector3`, `Mathf`, `Time`, `Debug`, `Physics`, `Component`, `MonoBehaviour`, `Color`).
+- **Signature Help**: Real-time parameter signatures and active parameter tracking on typing `(` and `,`.
+- **Semantic Highlighting**: Standard LSP delta-encoded semantic tokens for classes, structs, methods, properties, and keywords.
+- **LLM Agent Ready**: Self-describing `--print-config` and `--help` with `unity-csharp-fast-2nek` keyword for direct integration with AI coding agents.
 
 ---
 

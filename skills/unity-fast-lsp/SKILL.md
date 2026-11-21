@@ -55,9 +55,12 @@ UnityCSharpFastLSP.Server.exe --print-config
 | **Inspect File Outline** | `textDocument/documentSymbol` | Returns hierarchical symbols (Namespace, Class, Struct, Method, Property, Field). |
 | **Hover on Symbol** | `textDocument/hover` | Shows symbol signature and MonoBehaviour lifecycle documentation (e.g. `Update()`, `Awake()`). |
 | **Autocompletion** | `textDocument/completion` | Offers dot-member completion (`obj.`) via lightweight scoped type inference, 13 built-in Unity message templates, 11 common Unity attributes (e.g. `[SerializeField]`), and local symbols. |
-| **Jump to Definition** | `textDocument/definition` | Navigates to declarations across the workspace. |
+| **Jump to Definition** | `textDocument/definition` | Navigates to declarations across the workspace and local scopes. |
 | **Find References** | `textDocument/references` | Locates usages across all indexed `.cs` files in `Assets/` and `Packages/`. |
+| **Signature Help** | `textDocument/signatureHelp` | Displays active parameter index and parameter definitions while typing method calls. |
 | **Document Formatting** | `textDocument/formatting` | Fast bracket indentation and whitespace normalization (< 1 ms). |
+| **Semantic Highlighting** | `textDocument/semanticTokens/full` | High-speed delta-encoded semantic coloring for types, members, and keywords. |
+| **Document Highlight** | `textDocument/documentHighlight` | Highlights all occurrences of the identifier under cursor. |
 | **Syntax Diagnostics** | `textDocument/publishDiagnostics` | Live syntax checking with sub-millisecond incremental updates during typing. |
 
 ---

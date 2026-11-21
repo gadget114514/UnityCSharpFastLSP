@@ -196,7 +196,67 @@ public sealed record ServerCapabilities(
     [property: JsonPropertyName("definitionProvider")] bool DefinitionProvider,
     [property: JsonPropertyName("referencesProvider")] bool ReferencesProvider,
     [property: JsonPropertyName("documentSymbolProvider")] bool DocumentSymbolProvider,
-    [property: JsonPropertyName("documentFormattingProvider")] bool DocumentFormattingProvider = true
+    [property: JsonPropertyName("documentFormattingProvider")] bool DocumentFormattingProvider = true,
+    [property: JsonPropertyName("signatureHelpProvider")] SignatureHelpOptions? SignatureHelpProvider = null,
+    [property: JsonPropertyName("semanticTokensProvider")] SemanticTokensOptions? SemanticTokensProvider = null,
+    [property: JsonPropertyName("documentHighlightProvider")] bool DocumentHighlightProvider = true
+);
+
+public sealed record SignatureHelpOptions(
+    [property: JsonPropertyName("triggerCharacters")] string[] TriggerCharacters
+);
+
+public sealed record SignatureHelpParams(
+    [property: JsonPropertyName("textDocument")] TextDocumentIdentifier TextDocument,
+    [property: JsonPropertyName("position")] Position Position
+);
+
+public sealed record ParameterInformation(
+    [property: JsonPropertyName("label")] string Label,
+    [property: JsonPropertyName("documentation")] MarkupContent? Documentation = null
+);
+
+public sealed record SignatureInformation(
+    [property: JsonPropertyName("label")] string Label,
+    [property: JsonPropertyName("documentation")] MarkupContent? Documentation = null,
+    [property: JsonPropertyName("parameters")] IReadOnlyList<ParameterInformation>? Parameters = null
+);
+
+public sealed record SignatureHelp(
+    [property: JsonPropertyName("signatures")] IReadOnlyList<SignatureInformation> Signatures,
+    [property: JsonPropertyName("activeSignature")] int ActiveSignature = 0,
+    [property: JsonPropertyName("activeParameter")] int ActiveParameter = 0
+);
+
+public sealed record SemanticTokensLegend(
+    [property: JsonPropertyName("tokenTypes")] string[] TokenTypes,
+    [property: JsonPropertyName("tokenModifiers")] string[] TokenModifiers
+);
+
+public sealed record SemanticTokensOptions(
+    [property: JsonPropertyName("legend")] SemanticTokensLegend Legend,
+    [property: JsonPropertyName("full")] bool Full = true
+);
+
+public sealed record SemanticTokensParams(
+    [property: JsonPropertyName("textDocument")] TextDocumentIdentifier TextDocument
+);
+
+public sealed record SemanticTokens(
+    [property: JsonPropertyName("resultId")] string? ResultId,
+    [property: JsonPropertyName("data")] IReadOnlyList<int> Data
+);
+
+public enum DocumentHighlightKind
+{
+    Text = 1,
+    Read = 2,
+    Write = 3
+}
+
+public sealed record DocumentHighlight(
+    [property: JsonPropertyName("range")] Range Range,
+    [property: JsonPropertyName("kind")] DocumentHighlightKind Kind = DocumentHighlightKind.Text
 );
 
 public readonly record struct TextEdit(

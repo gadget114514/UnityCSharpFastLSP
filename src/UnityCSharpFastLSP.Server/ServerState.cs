@@ -27,6 +27,27 @@ public sealed class ServerState
     public DocumentSnapshot? GetDocument(string uri) =>
         _documents.TryGetValue(uri, out var snapshot) ? snapshot : null;
 
+    public DocumentSnapshot? GetOrLoadDocument(string uri)
+    {
+        if (_documents.TryGetValue(uri, out var snapshot))
+        {
+            return snapshot;
+        }
+
+        if (Uri.TryCreate(uri, UriKind.Absolute, out var uriObj) && uriObj.IsFile)
+        {
+            if (File.Exists(uriObj.LocalPath))
+            {
+                string text = File.ReadAllText(uriObj.LocalPath);
+                var snap = CsffSyntaxAdapter.Parse(text);
+                _documents[uri] = snap;
+                return snap;
+            }
+        }
+
+        return null;
+    }
+
     public void OpenDocument(string uri, string text, int version)
     {
         var snapshot = CsffSyntaxAdapter.Parse(text, version);

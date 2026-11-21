@@ -82,6 +82,18 @@ public sealed class LspServer
                     HandleReferences(id, parameters);
                     break;
 
+                case "textDocument/signatureHelp":
+                    HandleSignatureHelp(id, parameters);
+                    break;
+
+                case "textDocument/semanticTokens/full":
+                    HandleSemanticTokens(id, parameters);
+                    break;
+
+                case "textDocument/documentHighlight":
+                    HandleDocumentHighlight(id, parameters);
+                    break;
+
                 default:
                     if (hasId)
                     {
@@ -130,7 +142,10 @@ public sealed class LspServer
                 DefinitionProvider: true,
                 ReferencesProvider: true,
                 DocumentSymbolProvider: true,
-                DocumentFormattingProvider: true
+                DocumentFormattingProvider: true,
+                SignatureHelpProvider: new SignatureHelpOptions(["(", ","]),
+                SemanticTokensProvider: new SemanticTokensOptions(SemanticTokensProvider.Legend, Full: true),
+                DocumentHighlightProvider: true
             ),
             ServerInfo: new ServerInfo("UnityCSharpFastLSP", "1.0.0-net11")
         );
@@ -187,7 +202,7 @@ public sealed class LspServer
         var @params = JsonSerializer.Deserialize(parameters, LspJsonSerializerContext.Default.HoverParams);
         if (@params != null)
         {
-            var snapshot = _state.GetDocument(@params.TextDocument.Uri);
+            var snapshot = _state.GetOrLoadDocument(@params.TextDocument.Uri);
             if (snapshot != null)
             {
                 var model = new DocumentSemanticModel(snapshot, _state.SymbolIndex);
@@ -208,7 +223,7 @@ public sealed class LspServer
         var @params = JsonSerializer.Deserialize(parameters, LspJsonSerializerContext.Default.CompletionParams);
         if (@params != null)
         {
-            var snapshot = _state.GetDocument(@params.TextDocument.Uri);
+            var snapshot = _state.GetOrLoadDocument(@params.TextDocument.Uri);
             if (snapshot != null)
             {
                 var model = new DocumentSemanticModel(snapshot, _state.SymbolIndex);
@@ -226,7 +241,7 @@ public sealed class LspServer
         var @params = JsonSerializer.Deserialize(parameters, LspJsonSerializerContext.Default.DocumentFormattingParams);
         if (@params != null)
         {
-            var snapshot = _state.GetDocument(@params.TextDocument.Uri);
+            var snapshot = _state.GetOrLoadDocument(@params.TextDocument.Uri);
             if (snapshot != null)
             {
                 var edits = FastFormatter.FormatDocument(snapshot, @params.Options);
@@ -243,13 +258,16 @@ public sealed class LspServer
         var @params = JsonSerializer.Deserialize(parameters, LspJsonSerializerContext.Default.TextDocumentPositionParams);
         if (@params != null)
         {
-            var snapshot = _state.GetDocument(@params.TextDocument.Uri);
+            var snapshot = _state.GetOrLoadDocument(@params.TextDocument.Uri);
             if (snapshot != null)
             {
                 var model = new DocumentSemanticModel(snapshot, _state.SymbolIndex);
                 var locations = ScopedResolver.ResolveScopedDefinition(model, @params.TextDocument.Uri, @params.Position);
-                _writer.WriteResponse(id, locations, LspJsonSerializerContext.Default.ListLocation);
-                return;
+                if (locations.Count > 0)
+                {
+                    _writer.WriteResponse(id, locations, LspJsonSerializerContext.Default.ListLocation);
+                    return;
+                }
             }
         }
 
@@ -261,7 +279,7 @@ public sealed class LspServer
         var @params = JsonSerializer.Deserialize(parameters, LspJsonSerializerContext.Default.TextDocumentPositionParams);
         if (@params != null)
         {
-            var snapshot = _state.GetDocument(@params.TextDocument.Uri);
+            var snapshot = _state.GetOrLoadDocument(@params.TextDocument.Uri);
             if (snapshot != null)
             {
                 var model = new DocumentSemanticModel(snapshot, _state.SymbolIndex);
@@ -272,6 +290,62 @@ public sealed class LspServer
                     _writer.WriteResponse(id, locations, LspJsonSerializerContext.Default.ListLocation);
                     return;
                 }
+            }
+        }
+
+        _writer.WriteRawResponse(id, "[]"u8.ToArray());
+    }
+
+    private void HandleSignatureHelp(object? id, JsonElement parameters)
+    {
+        var @params = JsonSerializer.Deserialize(parameters, LspJsonSerializerContext.Default.SignatureHelpParams);
+        if (@params != null)
+        {
+            var snapshot = _state.GetOrLoadDocument(@params.TextDocument.Uri);
+            if (snapshot != null)
+            {
+                var model = new DocumentSemanticModel(snapshot, _state.SymbolIndex);
+                var help = SignatureHelpProvider.GetSignatureHelp(model, @params.Position);
+                if (help != null)
+                {
+                    _writer.WriteResponse(id, help, LspJsonSerializerContext.Default.SignatureHelp);
+                    return;
+                }
+            }
+        }
+
+        _writer.WriteRawResponse(id, "null"u8.ToArray());
+    }
+
+    private void HandleSemanticTokens(object? id, JsonElement parameters)
+    {
+        var @params = JsonSerializer.Deserialize(parameters, LspJsonSerializerContext.Default.SemanticTokensParams);
+        if (@params != null)
+        {
+            var snapshot = _state.GetOrLoadDocument(@params.TextDocument.Uri);
+            if (snapshot != null)
+            {
+                var tokens = SemanticTokensProvider.GetSemanticTokens(snapshot);
+                _writer.WriteResponse(id, tokens, LspJsonSerializerContext.Default.SemanticTokens);
+                return;
+            }
+        }
+
+        _writer.WriteRawResponse(id, "{\"data\":[]}"u8.ToArray());
+    }
+
+    private void HandleDocumentHighlight(object? id, JsonElement parameters)
+    {
+        var @params = JsonSerializer.Deserialize(parameters, LspJsonSerializerContext.Default.TextDocumentPositionParams);
+        if (@params != null)
+        {
+            var snapshot = _state.GetOrLoadDocument(@params.TextDocument.Uri);
+            if (snapshot != null)
+            {
+                var model = new DocumentSemanticModel(snapshot, _state.SymbolIndex);
+                var highlights = DocumentHighlightProvider.GetHighlights(model, @params.Position);
+                _writer.WriteResponse(id, highlights, LspJsonSerializerContext.Default.ListDocumentHighlight);
+                return;
             }
         }
 
