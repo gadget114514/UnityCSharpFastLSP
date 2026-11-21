@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\UnityCSharpFastLSP.Protocol\UnityCSharpFastLSP.Protocol.csproj" />
+    <ProjectReference Include="..\UnityCSharpFastLSP.Syntax\UnityCSharpFastLSP.Syntax.csproj" />
+    <ProjectReference Include="..\UnityCSharpFastLSP.Semantics\UnityCSharpFastLSP.Semantics.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,3 +1,13 @@
+bin/
+obj/
+out/
+.vs/
+.idea/
+*.user
+*.suo
+*.log
+.hancho/
+.claude/
 .zig-cache/
 zig-out/
 zig-pkg/

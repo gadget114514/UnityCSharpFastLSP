@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\UnityCSharpFastLSP.Protocol\UnityCSharpFastLSP.Protocol.csproj" />
+    <ProjectReference Include="..\UnityCSharpFastLSP.Syntax\UnityCSharpFastLSP.Syntax.csproj" />
+    <ProjectReference Include="..\UnityCSharpFastLSP.Semantics\UnityCSharpFastLSP.Semantics.csproj" />
+    <ProjectReference Include="..\UnityCSharpFastLSP.Workspace\UnityCSharpFastLSP.Workspace.csproj" />
+  </ItemGroup>
+</Project>

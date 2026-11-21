@@ -1,0 +1,119 @@
+using System.Collections.Concurrent;
+using UnityCSharpFastLSP.Protocol;
+
+namespace UnityCSharpFastLSP.Semantics;
+
+public sealed class SymbolIndex
+{
+    private readonly SymbolStringTable _stringTable = new();
+    private readonly ConcurrentDictionary<string, List<int>> _fileToSymbolIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<int, Symbol> _symbolsById = new();
+    private readonly ConcurrentDictionary<int, HashSet<int>> _nameIdToSymbolIds = new();
+    private int _nextSymbolId = 1;
+
+    public SymbolStringTable StringTable => _stringTable;
+
+    public void UpdateFileSymbols(string uri, IReadOnlyList<Symbol> symbols)
+    {
+        // 既存のファイル内シンボルを削除
+        if (_fileToSymbolIds.TryGetValue(uri, out var oldSymbolIds))
+        {
+            foreach (int id in oldSymbolIds)
+            {
+                if (_symbolsById.TryRemove(id, out var oldSym))
+                {
+                    if (_nameIdToSymbolIds.TryGetValue(oldSym.NameId, out var idSet))
+                    {
+                        lock (idSet)
+                        {
+                            idSet.Remove(id);
+                        }
+                    }
+                }
+            }
+        }
+
+        var newIds = new List<int>(symbols.Count);
+        foreach (var sym in symbols)
+        {
+            int id = Interlocked.Increment(ref _nextSymbolId);
+            int nameId = _stringTable.GetOrAdd(sym.Name);
+
+            var indexedSym = sym with { Id = id, NameId = nameId };
+            _symbolsById[id] = indexedSym;
+            newIds.Add(id);
+
+            var idSet = _nameIdToSymbolIds.GetOrAdd(nameId, _ => new HashSet<int>());
+            lock (idSet)
+            {
+                idSet.Add(id);
+            }
+        }
+
+        _fileToSymbolIds[uri] = newIds;
+    }
+
+    public void RemoveFile(string uri)
+    {
+        UpdateFileSymbols(uri, Array.Empty<Symbol>());
+        _fileToSymbolIds.TryRemove(uri, out _);
+    }
+
+    public List<Location> FindDefinitions(string name)
+    {
+        var results = new List<Location>();
+        int nameId = _stringTable.GetOrAdd(name);
+
+        if (_nameIdToSymbolIds.TryGetValue(nameId, out var idSet))
+        {
+            List<int> ids;
+            lock (idSet)
+            {
+                ids = new List<int>(idSet);
+            }
+
+            foreach (int id in ids)
+            {
+                if (_symbolsById.TryGetValue(id, out var sym))
+                {
+                    results.Add(new Location(sym.Uri, sym.Range));
+                }
+            }
+        }
+
+        return results;
+    }
+
+    public List<Location> FindReferences(string name)
+    {
+        // 定義箇所を含む参照候補を返却
+        return FindDefinitions(name);
+    }
+
+    public List<Symbol> FindSymbolsByName(string name)
+    {
+        var results = new List<Symbol>();
+        int nameId = _stringTable.GetOrAdd(name);
+
+        if (_nameIdToSymbolIds.TryGetValue(nameId, out var idSet))
+        {
+            List<int> ids;
+            lock (idSet)
+            {
+                ids = new List<int>(idSet);
+            }
+
+            foreach (int id in ids)
+            {
+                if (_symbolsById.TryGetValue(id, out var sym))
+                {
+                    results.Add(sym);
+                }
+            }
+        }
+
+        return results;
+    }
+
+    public int SymbolCount => _symbolsById.Count;
+}

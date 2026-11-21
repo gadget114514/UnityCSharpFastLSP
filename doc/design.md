@@ -1,256 +1,187 @@
-Unity専用LSPサーバー 統合設計書
-基盤技術: tree-sitter-c-sharp（同一リポジトリ配置・LLM非閲覧隔離） / Red-Green Tree / C++20 / LSP (JSON-RPC 2.0)
+# Unity 専用 LSP サーバー 設計書（csff ベース）
 
-文書バージョン: 1.3
+文書バージョン: 2.1
+作成日: 2026-11-21
+基盤技術: csff（F# / .NET 11, Native AOT） / C# / LSP (JSON-RPC 2.0)
 
-対象読者: コア開発者、言語解析担当、Unity 連携担当
+## 1. 概要・目的
 
-1. 概要・目的
-1.1 背景と課題
-従来の Roslyn ベースの C# 言語サーバーは、Unity プロジェクトの大規模な .csproj、多数のアセンブリ定義（*.asmdef）、Library/PackageCache 内のパッケージ群の解決に時間がかかり、起動遅延やメモリ消費が大きくなりがちです。また、編集中で構文が不完全な状態であっても、Unity 固有の文脈（MonoBehaviour ライフサイクル、[SerializeField] / Inspector 紐付け、GetComponent<T>() 型推論、.unity / .prefab 参照）を低遅延で提示するニーズがあります。
+既存の UnityCSharpLSP に対して、**ウォーム状態の per-request レイテンシ**で 10 倍の性能を達成する Unity 専用 LSP を構築する。UnityCSharpLSP はサーバを常驻させ、起動・初期化コストを先に払うことで高速性を担保しているため、比較は両サーバを十分ウォームアップした状態で行う。
 
-1.2 目的
-tree-sitter-c-sharp による超高速・耐障害性のある構文解析と、Red-Green Tree による不変・構造共有型 AST を組み合わせ、さらに Unity プロジェクト構造（.meta, .asmdef, シーン/プレハブ）を軽量にインデックス化することで、低遅延・低メモリ・高耐障害性な Unity 専用 LSP サーバーを実現します。
+10 倍のゲート対象は以下の 3 指標のみである。
 
-1.3 前提条件（tree-sitter-c-sharp の配置と LLM 非閲覧隔離）
-tree-sitter-c-sharp のソースは同一リポジトリ内に配置する（例: vendor/tree-sitter-c-sharp/、vendor/tree-sitter/）。
+- didChange → publishDiagnostics レイテンシ
+- completion 応答時間
+- hover 応答時間
 
-LLM には tree-sitter-c-sharp（および tree-sitter 本体・.scm クエリ）のソースコードを読ませない。
+ワークスペース初期インデックス時間と大量ファイル一括処理スループットは**ゲート外**とし、参考値として計測・記録するに留める。常驻化は「起動コストを先に払う」だけでリクエストごとの計算自体は速くならないため、10 倍はリクエストごとの仕事量を削ることで達成する（6.2 以降）。
 
-同一リポジトリ内にソースが存在しても、LLM の読み取り・コンテキスト投入・検索対象から除外する（.aiignore / .cursorignore / エージェント設定・プロンプト制約で隔離）。
+解析対象は **C# ソースファイル（*.cs）のみ**とし、.meta / .asmdef / シーン / プレハブ等のアセット解析はスコープ外とする。これによりアセット監視・DB 層・GUID 解決・AssetDaemon との IPC に起因するコストを全て削除する。
 
-LLM の閲覧・編集対象は include/unity_lsp/、src/（vendor/ と src/backend/ts_bridge.* を除く）、tests/、docs/ に限定する。
+## 2. 決定事項と前提
 
-vendor/ 配下のソースや tree-sitter C API（TSParser, TSTree, TSNode, TSQuery, TSInputEdit）はブリッジ層（src/backend/ts_bridge.*）内に閉じ込め、LLM からは include/unity_lsp/syntax_backend.hpp の抽象インターフェースのみを扱う。
+| 項目 | 決定 |
+|---|---|
+| 実装言語 | C# / .NET（旧設計の C++20 + tree-sitter は破棄） |
+| 構文解析 | csff（`thirdparty/csff`）をアセンブリ参照 |
+| セマンティック | 軽量近似。UnityCSharpLSP の内部構造（Protocol / Semantics / Workspace / Server の分担）に型の形を合わせる |
+| 性能目標 | ウォーム状態の per-request レイテンシ（didChange→診断 / completion / hover）で現状の 1/10。初期インデックス・一括処理はゲート外 |
+| 対象ファイル | *.cs のみ |
 
-1.4 スコープ
-対象言語: C#（Unity 向けスクリプト）
+### Unity ワークスペースの認識範囲
 
-通信プロトコル: Language Server Protocol (JSON-RPC 2.0 over stdio / TCP)
+Unity ワークスペースは「フォルダ構造としての判定」と「*.cs の走査」のみを扱う。
 
-主要機能:
+- ルート判定: `Assets/` + `Packages/` + `ProjectSettings/ProjectVersion.txt` の存在で Unity プロジェクトとみなす。
+- 走査対象: `Assets/**/*.cs` と `Packages/**/*.cs`（PackageCache 配下を含む）。
+- `initializationOptions.unityProjectPath` を受領し、`workspace/didChangeWatchedFiles` では .cs ファイルのみ差分更新する。
 
-リアルタイム診断（構文エラー + Unity 固有静的解析）
+明示的な範囲外（10 倍レイテンシを優先して削除）:
 
-定義ジャンプ / 参照検索（C# シンボル + .unity / .prefab 参照連携）
+- `.asmdef` によるアセンブリ境界・参照可視性（全 .cs をフラットに索引化するため、別アセンブリの internal / private も見える）
+- `.meta` GUID、シーン / プレハブ参照、未使用スクリプト検出
+- `ProjectVersion.txt` による API バージョンヒント、`packages-lock.json` の解決
 
-補完（C# 構文 + MonoBehaviour/ScriptableObject ライフサイクル・属性・GetComponent 補助）
+このため UnityCSharpLSP と比べると Unity アセット連携機能は後退するが、per-request レイテンシの 10 倍達成を優先する。
 
-ホバー情報（型情報・属性・シリアライズ状態・ドキュメントコメント）
+### 前提条件（ブロッカー）
 
-ドキュメントシンボル / ワークスペースシンボル
+- 開発環境にインストール済みの SDK は 8.0 / 9.0 / 10.0 のみ（最大 `10.0.203`）。csff は `Directory.Build.props` で `net11.0` をターゲットとしており、**着手前に .NET 11 SDK の導入が必要**。
+- `thirdparty/csff` は独自 `.git` を持つ通常ディレクトリであり、`.gitmodules` には tree-sitter-c-sharp しか登録されていない。ProjectReference のまま使用するか submodule 化するかを着手段階で決める。
 
-2. システムアーキテクチャ
-LSP クライアント（VS Code, Neovim, Zed 等）と StdioTransport を介して JSON-RPC 2.0 で通信し、内部を「LLM閲覧・編集対象」と「LLM非閲覧領域」に明確に分離します。
+## 3. 結論（重要）
 
-LSP Transport & Server Core (C++20) [LLM閲覧・編集対象]:
+csff にはセマンティックモデル（シンボル解決・型推論・バインダー）が存在しないため、**「csff のセマンティックモデルに寄せる」ことはできない**。寄せるのは UnityCSharpLSP の型の形・責務分担のみである。Roslyn の `SemanticModel` は Roslyn 固有の `SyntaxTree` / `Compilation` を要求するため、csff の CST では流用不可である。
 
-StdioTransport（Content-Length フレーミング、stdout は LSP 通信専用に厳格分離）
+## 4. csff の実態と利用方法
 
-リクエスト / 通知ディスパッチャおよびキャンセレーション（std::stop_token）
+- F# 製ライブラリ群（`Csff.Lexer` / `Csff.Parser` / `Csff.Printer`）。`net11.0` ターゲット、Native AOT 対応。
+- エントリポイント:
+  - `Csff.Parser.Parser.parse(source: string, tree: SyntaxTree) : unit`
+  - `Csff.Parser.Parser.parseWith(symbols: string[], source: string, tree: SyntaxTree) : unit`
+    - `#define` シンボルを注入可能。Unity の `UNITY_EDITOR` 等を渡せる。
+- CST 読み取り（公開 API）:
+  - `tree.Node(i)`, `tree.Token(i)`, `tree.ChildRange(i)`, `tree.SourceSpan(i)`
+  - `tree.NodeCount`, `tree.TokenCount`, `tree.IsComplete`, `tree.RecoveredTokens`
+- `NodeKind` / `TokenKind` の数値は **Roslyn `SyntaxKind` と同一**（`IdentifierName = 8616`, `InvocationExpression = 8634` 等）。自前 enum も同じ値にすれば、UnityCSharpLSP 側の知識をそのまま活かせる。
+- `Token.Start` / `Token.Length` は C# string の UTF-16 コード単位であり、**LSP の `Position.character` と一致**（サロゲートペアも一致）。
+- `SyntaxTree` は可変・プール再利用型で、`Parser.parse` が内部で `Reset()` する。**パース直後に配列を読み出して不変スナップショットへコピー**し、csff ツリーはプールへ戻す。
+- インクリメンタルパース API は存在しないため、didChange ごとに全文再パースする（csff はリポジトリ全体を既存フォーマッタの 20 倍で処理する実績があり、1 ファイルの再パースは十分高速）。
+- エラー回復は `IncompleteMember` / `BadToken` / `IsComplete` / `RecoveredTokens` により限定的に機能する。
 
-Syntax & Red-Green Layer [LLM閲覧・編集対象]:
+## 5. アーキテクチャ
 
-ISyntaxBackend（抽象インターフェース）からフラットな ParseEvent 列を受領
+```
+UnityCSharpFastLSP.sln
+Directory.Build.props                    net11.0 / nullable / latest
+thirdparty/csff/                          Csff.Parser / Csff.Lexer を参照
+src/UnityCSharpFastLSP.Protocol/          JSON-RPC 2.0, LSP DTO, Dispatcher
+src/UnityCSharpFastLSP.Syntax/            csff アダプタ, DocumentSnapshot, LineMap  ← csff 依存はここだけ
+src/UnityCSharpFastLSP.Semantics/         Symbol, SymbolIndex, DocumentSemanticModel, Binder, UnityRules
+src/UnityCSharpFastLSP.Workspace/         Workspace, *.cs 走査, ファイル監視
+src/UnityCSharpFastLSP.Server/            Program.cs, 依存注入, Providers
+tests/UnityCSharpFastLSP.Tests/           xUnit
+```
 
-GreenBuilder & GreenInterner（不変 GreenNode の shared_ptr 共有・インターン化）
+依存方向: `Server → Protocol → {Syntax, Semantics, Workspace} → Syntax → csff`。
+`Semantics` は csff 型に直接触れず、自前の `SyntaxKind` / `SyntaxNodeInfo` 経由で CST を受け取る。
 
-RedNode（親参照 + 絶対 UTF-8 / UTF-16 オフセットを持つ短寿命ビュー）
+## 6. 10 倍性能を実現する設計
 
-Unity Project Indexer & Semantic Engine [LLM閲覧・編集対象]:
+### 6.1 コールドパス（ゲート外・実装はするが 10 倍の評価対象にしない）
 
-Assets/、Packages/、ProjectSettings/ 走査（.meta GUID、.asmdef、.unity/.prefab、SymbolTable）
+比較相手が常驻済みであるため、AOT や並列初期索引による起動高速化は 10 倍の点数にならない。以下は「起動を遅くしない」ための実装とし、ゲートには含めない。
 
-スコープ・型解決器および Unity 固有ルール（LifecycleRule, SerializeRule, ComponentRule）
+- `Channel<string>` + 並列ワーカーで `.cs` を走査し、**パースとシンボル抽出を 1 パスで実施**（2 回走査しない）。
+- `SyntaxTree` インスタンスをワーカーごとにプールし、csff の `SharedBuckets` と合わせて配列確保を最小化。
+- シンボルを struct + int ID で保持する。
+  - `Symbol { nameId, kind, containingTypeId, signature, start, length, flags }`
+  - 識別子は相互化テーブル（`string → int`）で O(1) 比較。
+- 逆引きは `Dictionary<int, int[]>`（名前 ID → シンボル ID 列）、実体は `Symbol[]` のフラット配列。
+- Native AOT publish は任意（起動のみに寄与し、ウォーム時の per-request レイテンシにはほぼ影響しない）。
 
-LLM Non-Read Boundary [同一リポジトリ内に存在するが LLM には読ませない領域]:
+なお常驻中は、この索引をメモリ上に保持し続け、リクエストごとに再構築しないことが前提である。
 
-vendor/tree-sitter/
+### 6.2 ホットパス（didChange → 診断）
 
-vendor/tree-sitter-c-sharp/（parser.c, scanner.c, queries）
+- 変更ファイルのみ csff で全文再パースする。**この全文再パースが didChange→診断のクリティカルパスに乗る**。csff はインクリメンタルパース API を持たないため、ウォーム比較ではここが最大のリスク因子となる（11 節参照）。Phase 0 で最初に計測する。
+- パース直後にノード / トークン配列を不変スナップショットへコピーする。
+  - `(Source, NodeInfo[], TokenInfo[], LineMap, Version)`
+  - csff ツリーは可変・プール再利用型であるため、コピーによって読み手をロックフリーにする。
+- 診断は **CST から直接生成**する（`BadToken` / `IncompleteMember` / `IsComplete`）。セマンティック解析を通さない。
+- シンボル索引は**そのファイルの分だけ差し替え**（旧シンボル ID 削除 + 新規追加）。O(ファイル内シンボル数)。
+- 5〜10 ms のデバウンスでキー入力を合体し、バージョンごとに `CancellationToken` を発行して古い診断を破棄する（latest-wins）。
 
-src/backend/ts_bridge.*（TSParser / TSTree C API ラッパー）
+### 6.3 completion / hover
 
-2.1 技術選定・依存関係
-言語標準: C++20（std::filesystem, std::jthread, std::stop_token, std::shared_mutex, std::span, std::expected）
+- スナップショットに**ノードのトークン範囲のソート配列**を持たせ、offset から二分探索で最小包含ノードを特定し、`Parent` チェーンで上位へ辿る。O(log n)。
+- スコープ解決は enclosing method / class / namespace の**部分木だけ**を走査する（ファイル全体を読まない）。
+- 名前解決は相互化済み ID の `Dictionary` 参照のみ。オーバーロード解決・完全な型推論は行わない。
+- 結果を `(Version, Position, RequestKind)` でメモ化し、編集時に無効化する。
 
-ビルドシステム: CMake 3.25+
+### 6.4 アロケーション規律（全経路共通）
 
-コア依存ライブラリ:
+- ホットパスで LINQ / ラムダ / 一時 `List<T>` を禁止し、`ArrayPool<T>` と struct を使用。
+- LSP DTO は source-generated `JsonSerializerContext`（リフレクション零）。
+- Content-Length フレーミングは `ArrayPool<byte>` で手動実装。
+- 索引は copy-on-write でスワップし、読み手はロック取得なし（書き手のみ同期）。
 
-tree-sitter（vendor/tree-sitter として同一リポジトリ配置・静的リンク）
+### 6.5 スレッドモデル
 
-tree-sitter-c-sharp（vendor/tree-sitter-c-sharp として同一リポジトリ配置・静的リンク）
+- IO スレッドは JSON-RPC の読み書きのみ。パース・索引更新・要求処理はワーカープールが実行。
+- ドキュメント単位で「最新バージョン勝ち」。古いワーカーの処理はキャンセル。
+- stdout は LSP 通信専有。ログは stderr に出力（Native AOT でも維持）。
 
-nlohmann/json（JSON-RPC 2.0 シリアライズ/デシリアライズ）
+## 7. セマンティックモデル（軽量近似）
 
-spdlog（stderr またはファイルへのログ出力）
+UnityCSharpLSP の内部構造と同じ概念を C# で再定義する（正確な型名は移植時に合わせる）。
 
-GoogleTest（単体・結合テスト）
+| 型 | 責務 |
+|---|---|
+| `Symbol` | kind / name / qualifiedName / containingType / signature / Location / static / Unity 属性フラグ |
+| `SymbolIndex` | ワークスペース全体の名前 → 定義一覧と逆引き（参照搜索用） |
+| `DocumentSemanticModel` | 位置から `SyntaxNodeInfo` を取得し、スコープ内シンボルを解決 |
+| `Binder`（軽量） | ローカル変数 → パラメータ → フィールド / プロパティ → 型名 → 基底型 の順で解決 |
+| `UnityRules` | ライフサイクルメソッド検証、`[SerializeField]`、`GetComponent<T>()` 型推論 |
 
-重要制約:
+対応範囲外（明記）: ジェネリクス制約、LINQ、拡張メソッド、Source Generator、外部 DLL メタデータの完全解析、アセット GUID 連携。
 
-stdio トランスポート利用時、std::cout / printf への出力は JSON-RPC ストリームを破損させます。ログはすべて spdlog 経由で stderr または専用ログファイルへ出力します。
+## 8. LSP 機能と根拠
 
-vendor/ および src/backend/ts_bridge.* は同一リポジトリ内に置きますが、LLM のプロンプト・ツール読み取り・コンテキスト検索対象から除外します。
+| 機能 | 根拠 |
+|---|---|
+| diagnostics | CST の `BadToken` / `IncompleteMember` / `IsComplete` + UnityRules |
+| documentSymbol / workspaceSymbol | CST の宣言ノード + SymbolIndex |
+| definition / references | SymbolIndex（名前一致 + スコープ絞り込み） |
+| hover | Symbol のシグネチャ + Trivia から抽出した XML ドキュメントコメント |
+| completion | 構文コンテキスト + SymbolIndex + ライフサイクル / 属性候補 |
 
-3. Red-Green Tree 設計
-3.1 導入目的と役割分担
-Roslyn や rust-analyzer と同様の Red-Green Tree を採用し、イミュータブルなスナップショット管理と差分更新時のアロケーション削減を行います。
+データフロー: `didChange → SyntaxAdapter.Parse → DocumentSnapshot 差し替え → SymbolIndex 部分更新 → デバウンス → Provider → publishDiagnostics / 応答`
 
-Green Tree（不変・構造共有・相対位置）:
+## 9. 実装フェーズ
 
-テキスト内容と構文構造を表すイミュータブルなノード群。
+1. **Phase 0（Go/No-Go 判定）**: ソリューション雛形、.NET 11 SDK 導入、csff 参照。Unity スクリプトを csff でパースし CST をダンプして宣言ノードの取り方を検証。並行してウォーム状態のベンチハーネスを用意し、**csff の 1 ファイル再パース時間が「現状 / 10」に収まるかを先に測定**する。収まらない場合は 11 節のインクリメンタル API 追加を前提に計画を再構築する。
+2. **Phase 1**: JSON-RPC トランスポート、`initialize` / `didOpen` / `didChange`、構文診断、documentSymbol。
+3. **Phase 2**: Workspace インデックス（*.cs 並列走査・相互化・逆引き）、definition / references。常驻中の索引保持と差分更新を実装。
+4. **Phase 3**: `DocumentSemanticModel` + 軽量 Binder、hover / completion、UnityRules。
+5. **Phase 4**: ウォーム状態の per-request ベンチによる 10 倍検証、キャンセル / デバウンスチューニング。必要なら csff フォークによる差分再パースを組み込む。
 
-子ノードは std::shared_ptr<const GreenNode> で共有され、親ポインタや絶対座標を持たないため、編集時に変更パス上のノードのみを再構築し、未変更サブツリーを再利用します。
+## 10. 計測と検証
 
-Green Interner により、同一種別・同一テキストの葉ノード（キーワード、演算子、識別子、空白・改行など）を重複排除します。
+- lsbench 相当のベンチハーネスを新規作成し、Unity 想定の合成 *.cs コーパス（サイズ混在・N ファイル）で計測する。
+- **比較条件を揃える**: 現状実装・本実装の両方を十分ウォームアップする（対象ドキュメントを open し、初期インデックス完了・キャッシュ温熱状態にしてから計測開始）。常驻していない状態との比較は行わない。
+- ゲート指標は 3 指標のみ: didChange→診断 / completion / hover の p50・p95 を**同一マシン・同一コーパス・同一クライアント**で比較し、「≤ 現状 / 10」を合格とする。
+- コールド側（初期インデックス時間 / 大量ファイル一括処理）は参考値として別途記録し、ゲートには含めない。
+- 内部計測（parse / index-update / scope-resolve の `Stopwatch`）を stderr に出力し、ボトルネックを常に可視化する。特に parse が全体のどれを占めるかを Phase 0 から追跡する。
+- 日本語コメント・絵文字を含むソースで UTF-16 位置がズレないことを確認する。
+- 不完全なコード（途中の `class` / `void M(`）で診断が落ちずに出力されることを確認する。
+- `UNITY_EDITOR` を seeded symbols に渡した場合としない場合で `#if` 分岐の CST が変化することを確認する。
 
-Red Tree（短寿命・絶対位置・親参照）:
+## 11. リスクと最終手段
 
-GreenNode をラップし、親ノードへの参照とルートからの絶対 UTF-8 / UTF-16 オフセットを提供します。
-
-LSP リクエスト処理ごとに DocumentSnapshot からオンデマンド生成して走査します。
-
-3.2 tree-sitter-c-sharp とのハイブリッド連携（ブラックボックス境界経由）
-vendor/tree-sitter-c-sharp の内部構造は src/backend/ts_bridge.* に閉じ込め、LLM には ISyntaxBackend 経由で深さ優先のフラットなイベント列（ParseEvent）として渡します。
-
-一次差分パース: didChange 受信時、ISyntaxBackend::parse_incremental() が内部の TSTree に差分編集を適用し、変更範囲のイベント列を返却します。
-
-Green Tree 差分構築 (GreenBuilder): ParseEvent 列をスタックマシンで処理し、変更されていないサブツリーは既存 DocumentSnapshot の GreenNodePtr を再利用しながら新しい GreenNodePtr ツリーを構築します。
-
-スナップショット差し替え: std::shared_ptr<const DocumentSnapshot> をアトミックに更新し、進行中のワーカーは旧スナップショットを安全に完了させます。
-
-3.3 ブラックボックス境界インターフェース（include/unity_lsp/syntax_backend.hpp）
-LLM が参照・利用する唯一の構文バックエンド契約として、以下の型とインターフェースを定義します。
-
-SyntaxKind 列挙型: Unknown, Error, Missing, Token, Trivia, CompilationUnit, NamespaceDeclaration, ClassDeclaration, StructDeclaration, InterfaceDeclaration, EnumDeclaration, MethodDeclaration, FieldDeclaration, PropertyDeclaration, AttributeList, InvocationExpression, IdentifierName, Block
-
-ParseEventKind 列挙型: EnterNode, LeafNode, ExitNode
-
-TextEdit 構造体: start_utf8, old_end_utf8, new_end_utf8, start_utf16, old_end_utf16, new_end_utf16
-
-ParseEvent 構造体: event, kind, start_utf8, end_utf8, is_error, is_missing
-
-ParseResult 構造体: reused_previous, events
-
-ISyntaxBackend 抽象クラス:
-
-virtual ParseResult parse_initial(std::string_view source) = 0;
-
-virtual ParseResult parse_incremental(std::string_view new_source, std::span<const TextEdit> edits) = 0;
-
-ファクトリ関数: std::unique_ptr<ISyntaxBackend> create_csharp_syntax_backend();（src/backend/ts_bridge.cpp 側で実装）
-
-3.4 Red-Green Tree コアデータ構造（C++20 仕様）
-TextLen: utf8_bytes, utf16_units, newlines, last_line_utf16_units を保持し、from_utf8() および加算演算子を提供。
-
-GreenChild: GreenNodePtr node, uint32_t utf8_offset, uint32_t utf16_offset。
-
-GreenNode:
-
-葉ノードコンストラクタ: (SyntaxKind kind, std::string text, bool is_error = false, bool is_missing = false)
-
-内部ノードコンストラクタ: (SyntaxKind kind, std::vector<GreenChild> children, bool has_error = false)
-
-アクセサ: kind(), is_token(), has_error(), is_missing(), text_len(), text(), children()。
-
-3.5 UTF-8 バイト位置 ↔ LSP UTF-16 位置変換
-LSP の Position（line, character）は UTF-16 コード単位、ISyntaxBackend / GreenNode のオフセットは UTF-8 バイト を基準とします。TextLen と GreenChild の utf8_offset / utf16_offset を同時に保持することで、日本語コメントや絵文字を含む Unity プロジェクトでも座標ズレを防ぎます。
-
-4. ディレクトリ構成（LLM閲覧境界の明示）
-CMakeLists.txt
-
-CMakePresets.json
-
-.aiignore（vendor/ および src/backend/ts_bridge.* を除外）
-
-include/unity_lsp/syntax_backend.hpp — [LLM閲覧可] 唯一の構文バックエンド契約
-
-vendor/tree-sitter/ — [LLM閲覧禁止] 同一リポジトリ配置の外部ソース
-
-vendor/tree-sitter-c-sharp/ — [LLM閲覧禁止] 同一リポジトリ配置の外部ソース
-
-src/main.cpp — [LLM閲覧可]
-
-src/backend/ts_bridge.hpp, src/backend/ts_bridge.cpp — [LLM閲覧禁止] tree-sitter C API ブリッジ
-
-src/transport/stdio_transport.hpp, src/transport/stdio_transport.cpp — [LLM閲覧可]
-
-src/lsp/protocol.hpp, src/lsp/json_codec.*, src/lsp/server.* — [LLM閲覧可]
-
-src/syntax/green_node.*, src/syntax/green_interner.*, src/syntax/green_builder.*, src/syntax/red_node.*, src/syntax/document_snapshot.hpp, src/syntax/syntax_engine.* — [LLM閲覧可]
-
-src/unity/project_indexer.*, src/unity/symbol_table.*, src/unity/rules/unity_rule.hpp, lifecycle_rule.cpp, serialize_rule.cpp, component_rule.cpp — [LLM閲覧可]
-
-src/providers/diagnostics_provider.cpp, definition_provider.cpp, references_provider.cpp, completion_provider.cpp, hover_provider.cpp — [LLM閲覧可]
-
-tests/green_tree_test.cpp, red_node_test.cpp, syntax_engine_test.cpp, lsp_integration_test.cpp — [LLM閲覧可]
-
-5. Unity プロジェクトインデクサ & 意味解析設計
-5.1 ProjectIndexer
-ワークスペースルート配下の Assets/、Packages/、ProjectSettings/ を走査し、Unity 固有のメタデータをインデックス化します。
-
-*.meta: guid, MonoImporter / AssemblyDefinitionImporter を抽出し、GUID と .cs / .asmdef を紐付けます。
-
-*.asmdef: name, references, includePlatforms, defineConstraints を抽出し、型可視性・名前空間解決スコープを制御します。
-
-*.cs: 型定義（class, struct, interface, enum）、基底型、メンバシグネチャを抽出し、ワークスペース全体のシンボル索引を構築します。
-
-*.unity, *.prefab: MonoBehaviour の m_Script: {guid: ...} と行番号を抽出し、シーン/プレハブ内参照検索・未使用スクリプト検出に利用します。
-
-ProjectSettings/ProjectVersion.txt: Unity エディタバージョンを抽出し、API 互換性ヒントに利用します。
-
-変更通知（workspace/didChangeWatchedFiles）を受信した際は、該当ファイルのみ差分再インデックスを行います。
-
-5.2 IUnityRule プラグイン機構
-Unity 固有の静的解析・補完拡張を IUnityRule 実装クラスとして追加します。
-
-LifecycleRule: MonoBehaviour / ScriptableObject / EditorWindow 派生クラスにおける Awake, Start, Update, FixedUpdate, LateUpdate, OnEnable, OnDisable, OnDestroy, OnValidate, Reset のシグネチャ検証と補完候補提供。
-
-SerializeRule: [SerializeField] 付与 private フィールドに対する未使用警告の抑制、[SerializeReference] の型制約チェックおよび Unity 非シリアライズ型（ジェネリック直下、辞書等）へのヒント表示。
-
-ComponentRule: GetComponent<T>() / TryGetComponent<T>(out var x) / AddComponent<T>() の戻り値型推論、[RequireComponent(typeof(T))] が付与されたクラスにおける GetComponent<T>() の null 安全性ヒント。
-
-6. スレッドモデルと並行制御
-Main / IO Thread: StdioTransport::read_loop() で Content-Length フレーミングを読み、有界 MPSC キューへ投入します（stdout は LSP 出力専用）。
-
-Worker Pool (std::jthread x N): DocumentSnapshot の差分更新と LSP リクエスト処理を実行します。SymbolTable / ProjectIndexer は std::shared_mutex で読み取り共有し、DocumentSnapshot は std::shared_ptr でアトミックに差し替えます。
-
-キャンセレーション ($/cancelRequest): リクエストごとに std::stop_source を発行し、AST 走査やファイル検索時に stop_token.stop_requested() を確認して早期中断します。
-
-診断デバウンス: didChange 時はスナップショットのみ即時更新し、診断再計算は 30ms 程度のデバウンスタイマー経由でワーカーへ投入します。
-
-高速パス: GreenNode::has_error() == false の場合、構文エラーノード走査をスキップします。
-
-7. LSP 機能仕様
-initialize / initialized: ケーパビリティ宣言、initializationOptions（unityProjectPath, enableUnityRules）受領、バックグラウンド初期スキャン開始。
-
-textDocument/didOpen / didChange: ISyntaxBackend 差分パース + GreenBuilder 差分構築（構文エラーがあっても周辺の解析を継続）。
-
-textDocument/publishDiagnostics: Error / Missing ノード + IUnityRule 診断を返却（ライフサイクル誤記、シリアライズ警告、アセット未参照通知）。
-
-textDocument/definition: 同一ファイル・ワークスペース内の型/メンバ定義へジャンプ（基底クラス・インターフェース実装候補の提示）。
-
-textDocument/references: シンボル参照箇所を検索（C# 参照 + .unity / .prefab 内の m_Script GUID 参照）。
-
-textDocument/completion: カーソル位置の構文コンテキストに応じた候補返却（MonoBehaviour ライフサイクルメソッド補完、属性補完）。
-
-textDocument/hover: 型情報・属性・ドキュメントコメント表示（基底クラス階層や Inspector シリアライズ状態の概要）。
-
-8. 非機能要件・テスト戦略
-8.1 非機能要件
-LLM 非閲覧隔離要件: vendor/ と src/backend/ts_bridge.* は同一リポジトリ内に存在するが、LLM の読み取り・参照対象外とする。
-
-応答性: didChange → publishDiagnostics / completion 応答まで 10ms〜30ms 以内。
-
-メモリ使用量: 常時 200MB 以下（不変 GreenNode 共有とシンボルメタデータ保持）。
-
-8.2 テスト戦略
-green_tree_test.cpp: GreenInterner のポインタ共有、差分再構築時のサブツリー再利用率。
-
-red_node_test.cpp: UTF-8 / UTF-16 座標変換精度、親遡り・トークン検索。
-
-syntax_engine_test.cpp: ISyntaxBackend のモック実装（FakeSyntaxBackend）を用いた SyntaxEngine 単体テスト（vendor/ 非依存で高速実行可能）。
-
-lsp_integration_test.cpp: ダミー Unity プロジェクトと create_csharp_syntax_backend() を結合した E2E テスト。
+- **最大リスク（ウォーム比較特有）**: csff はインクリメンタルパース API を公開していないため、didChange の全文再パースがレイテンシに直撃する。この点では tree-sitter の `TSInputEdit` による部分再パースが有利。Phase 0 の実測で「現状 / 10」に収まらない場合は、csff をフォークして内部の `Checkpoint` / `Restore` と `TokenInput.BorrowFrom` / `CopyFrom` を LSP 用の差分再パース API として公開する（最終手段）。それでも届かない場合は、構文バックエンドの見直し（ハイブリッド構成等）を検討する。
+- 比較相手が常驻済みであるため、10 倍の効果は「Roslyn バインド廃止」「差分索引更新」「O(log n) 位置特定」「IPC 廃止」の 4 点に依存する。いずれかが欠けると目標を満たせない。
+- 現状のウォーム時レイテンシが既に極小（10 ms 以下等）の場合、10 倍は体感差が薄い。Phase 0 の計測結果を見て目標値の妥当性を再確認する。
+- セマンティックは軽量近似のままとし、10 倍目標を優先する。
+- .NET 11 SDK は未導入のため、Phase 0 の最初に導入する。
+- 構文バックエンドを csff に固定するため、csff の CST 形状に依存したコードは `Syntax` プロジェクト内に閉じ込める。

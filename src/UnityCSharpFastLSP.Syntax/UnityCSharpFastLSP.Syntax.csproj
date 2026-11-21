@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\UnityCSharpFastLSP.Protocol\UnityCSharpFastLSP.Protocol.csproj" />
+    <ProjectReference Include="..\..\thirdparty\csff\src\Csff.Lexer\Csff.Lexer.fsproj" />
+    <ProjectReference Include="..\..\thirdparty\csff\src\Csff.Parser\Csff.Parser.fsproj" />
+  </ItemGroup>
+</Project>

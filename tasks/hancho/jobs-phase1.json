@@ -1,0 +1,88 @@
+{
+  "taskqueue": "fastlsp-phase1",
+  "concurrency": 1,
+  "jobs": [
+    {
+      "id": "p1-01-protocol",
+      "command": "C:/Users/bluen/dotnet11/dotnet.exe build src/UnityCSharpFastLSP.Protocol/UnityCSharpFastLSP.Protocol.csproj -c Release",
+      "cwd": "D:/wsgit/UnityCSharpFastLSP",
+      "env": {
+        "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11"
+      },
+      "summary": "Implement and build Protocol layer (DTO, JSON-RPC, Framing)",
+      "timeoutSec": 300,
+      "instructionsFile": "D:/wsgit/UnityCSharpFastLSP/tasks/hancho/instructions/p1_01_protocol.md",
+      "success": {
+        "exitCode": 0
+      }
+    },
+    {
+      "id": "p1-02-syntax",
+      "command": "C:/Users/bluen/dotnet11/dotnet.exe build src/UnityCSharpFastLSP.Syntax/UnityCSharpFastLSP.Syntax.csproj -c Release",
+      "cwd": "D:/wsgit/UnityCSharpFastLSP",
+      "env": {
+        "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11"
+      },
+      "summary": "Implement and build Syntax layer (DocumentSnapshot, Diagnostics)",
+      "timeoutSec": 300,
+      "dependsOn": [
+        "p1-01-protocol"
+      ],
+      "instructionsFile": "D:/wsgit/UnityCSharpFastLSP/tasks/hancho/instructions/p1_02_syntax.md",
+      "success": {
+        "exitCode": 0
+      }
+    },
+    {
+      "id": "p1-03-documentsymbol",
+      "command": "C:/Users/bluen/dotnet11/dotnet.exe build src/UnityCSharpFastLSP.Syntax/UnityCSharpFastLSP.Syntax.csproj -c Release",
+      "cwd": "D:/wsgit/UnityCSharpFastLSP",
+      "env": {
+        "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11"
+      },
+      "summary": "Implement DocumentSymbol extraction from CST",
+      "timeoutSec": 300,
+      "dependsOn": [
+        "p1-02-syntax"
+      ],
+      "instructionsFile": "D:/wsgit/UnityCSharpFastLSP/tasks/hancho/instructions/p1_03_documentsymbol.md",
+      "success": {
+        "exitCode": 0
+      }
+    },
+    {
+      "id": "p1-04-server",
+      "command": "C:/Users/bluen/dotnet11/dotnet.exe build src/UnityCSharpFastLSP.Server/UnityCSharpFastLSP.Server.csproj -c Release",
+      "cwd": "D:/wsgit/UnityCSharpFastLSP",
+      "env": {
+        "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11"
+      },
+      "summary": "Integrate Server lifecycle (didOpen, didChange, debounce, dispatch)",
+      "timeoutSec": 300,
+      "dependsOn": [
+        "p1-03-documentsymbol"
+      ],
+      "instructionsFile": "D:/wsgit/UnityCSharpFastLSP/tasks/hancho/instructions/p1_04_server.md",
+      "success": {
+        "exitCode": 0
+      }
+    },
+    {
+      "id": "p1-05-tests",
+      "command": "C:/Users/bluen/dotnet11/dotnet.exe test tests/UnityCSharpFastLSP.Tests/UnityCSharpFastLSP.Tests.csproj -c Release",
+      "cwd": "D:/wsgit/UnityCSharpFastLSP",
+      "env": {
+        "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11"
+      },
+      "summary": "Run full test suite for Phase 1 verification",
+      "timeoutSec": 300,
+      "dependsOn": [
+        "p1-04-server"
+      ],
+      "instructionsFile": "D:/wsgit/UnityCSharpFastLSP/tasks/hancho/instructions/p1_05_tests.md",
+      "success": {
+        "exitCode": 0
+      }
+    }
+  ]
+}

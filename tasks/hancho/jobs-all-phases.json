@@ -1,0 +1,75 @@
+{
+  "taskqueue": "fastlsp-full-pipeline",
+  "concurrency": 1,
+  "jobs": [
+    {
+      "id": "full-01-protocol",
+      "command": "C:/Users/bluen/dotnet11/dotnet.exe build src/UnityCSharpFastLSP.Protocol/UnityCSharpFastLSP.Protocol.csproj -c Release",
+      "cwd": "D:/wsgit/UnityCSharpFastLSP",
+      "env": { "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11" },
+      "summary": "Build Protocol Layer (JSON-RPC 2.0 DTO & Framing)",
+      "timeoutSec": 300,
+      "success": { "exitCode": 0 }
+    },
+    {
+      "id": "full-02-syntax",
+      "command": "C:/Users/bluen/dotnet11/dotnet.exe build src/UnityCSharpFastLSP.Syntax/UnityCSharpFastLSP.Syntax.csproj -c Release",
+      "cwd": "D:/wsgit/UnityCSharpFastLSP",
+      "env": { "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11" },
+      "summary": "Build Syntax Layer (IncrementalParser, CST Diagnostics, DocumentSymbol)",
+      "timeoutSec": 300,
+      "dependsOn": [ "full-01-protocol" ],
+      "success": { "exitCode": 0 }
+    },
+    {
+      "id": "full-03-semantics",
+      "command": "C:/Users/bluen/dotnet11/dotnet.exe build src/UnityCSharpFastLSP.Semantics/UnityCSharpFastLSP.Semantics.csproj -c Release",
+      "cwd": "D:/wsgit/UnityCSharpFastLSP",
+      "env": { "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11" },
+      "summary": "Build Semantics Layer (SymbolIndex, Hover, Completion, UnityRules)",
+      "timeoutSec": 300,
+      "dependsOn": [ "full-02-syntax" ],
+      "success": { "exitCode": 0 }
+    },
+    {
+      "id": "full-04-workspace",
+      "command": "C:/Users/bluen/dotnet11/dotnet.exe build src/UnityCSharpFastLSP.Workspace/UnityCSharpFastLSP.Workspace.csproj -c Release",
+      "cwd": "D:/wsgit/UnityCSharpFastLSP",
+      "env": { "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11" },
+      "summary": "Build Workspace Layer (Assets/Packages Parallel Indexer)",
+      "timeoutSec": 300,
+      "dependsOn": [ "full-03-semantics" ],
+      "success": { "exitCode": 0 }
+    },
+    {
+      "id": "full-05-server",
+      "command": "C:/Users/bluen/dotnet11/dotnet.exe build src/UnityCSharpFastLSP.Server/UnityCSharpFastLSP.Server.csproj -c Release",
+      "cwd": "D:/wsgit/UnityCSharpFastLSP",
+      "env": { "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11" },
+      "summary": "Build Server Layer (LspServer & Program)",
+      "timeoutSec": 300,
+      "dependsOn": [ "full-04-workspace" ],
+      "success": { "exitCode": 0 }
+    },
+    {
+      "id": "full-06-tests",
+      "command": "C:/Users/bluen/dotnet11/dotnet.exe test tests/UnityCSharpFastLSP.Tests/UnityCSharpFastLSP.Tests.csproj -c Release --no-build",
+      "cwd": "D:/wsgit/UnityCSharpFastLSP",
+      "env": { "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11" },
+      "summary": "Run Full Integration Test Suite (11 Tests)",
+      "timeoutSec": 300,
+      "dependsOn": [ "full-05-server" ],
+      "success": { "exitCode": 0 }
+    },
+    {
+      "id": "full-07-benchmark",
+      "command": "C:/Users/bluen/dotnet11/dotnet.exe run --project benchmarks/Phase0.Bench/Phase0.Bench.csproj -c Release --no-build",
+      "cwd": "D:/wsgit/UnityCSharpFastLSP",
+      "env": { "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11" },
+      "summary": "Run Phase 4 Gate Benchmark (10x Speedup Verification)",
+      "timeoutSec": 300,
+      "dependsOn": [ "full-06-tests" ],
+      "success": { "exitCode": 0 }
+    }
+  ]
+}
