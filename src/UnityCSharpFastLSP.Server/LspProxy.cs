@@ -25,7 +25,8 @@ public sealed class LspProxy : IDisposable
         "textDocument/signatureHelp",
         "textDocument/semanticTokens/full",
         "textDocument/documentHighlight",
-        "textDocument/documentSymbol"
+        "textDocument/documentSymbol",
+        "workspace/symbol"
     };
 
     public LspProxy(Stream clientOutput, string? upstreamExecutablePath = null)

@@ -27,6 +27,7 @@ For a detailed classification of all LSP 3.17 features into **Implemented**, **F
 | `textDocument/signatureHelp` | Request | **Full** | Real-time parameter signatures and active parameter index tracking for methods (`(` and `,` triggers). |
 | `textDocument/semanticTokens/full` | Request | **Full** | Standard LSP delta-encoded semantic tokens for classes, structs, interfaces, enums, methods, properties, variables, keywords, strings, numbers, and comments. |
 | `textDocument/documentHighlight` | Request | **Full** | Fast document-wide identifier occurrence highlighting. |
+| `workspace/symbol` | Request | **Full** | High-speed workspace symbol search with pattern extensions (wildcards `*`/`?`, CamelCase `PC` -> `PlayerController`, container-qualified `Player.Update`, substring and fuzzy matching). |
 
 ---
 

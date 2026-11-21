@@ -52,6 +52,9 @@ namespace UnityCSharpFastLSP.Protocol;
 [JsonSerializable(typeof(TypeDefinitionParams))]
 [JsonSerializable(typeof(JsonRpcRequest))]
 [JsonSerializable(typeof(JsonRpcNotification))]
+[JsonSerializable(typeof(WorkspaceSymbolParams))]
+[JsonSerializable(typeof(SymbolInformation))]
+[JsonSerializable(typeof(List<SymbolInformation>))]
 public partial class LspJsonSerializerContext : JsonSerializerContext
 {
 }

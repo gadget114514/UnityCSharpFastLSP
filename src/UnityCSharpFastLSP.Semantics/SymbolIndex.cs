@@ -273,5 +273,32 @@ public sealed class SymbolIndex
         return FindDefinitions(symbolName);
     }
 
+    public List<SymbolInformation> FindWorkspaceSymbols(string query, int maxResults = 200)
+    {
+        var matches = new List<(SymbolInformation Info, int Score)>();
+
+        foreach (var kvp in _symbolsById)
+        {
+            var sym = kvp.Value;
+            if (SymbolPatternMatcher.Matches(query, sym.Name, sym.ContainingType, out int score))
+            {
+                var info = new SymbolInformation(
+                    Name: sym.Name,
+                    Kind: sym.Kind,
+                    Location: new Location(sym.Uri, sym.Range),
+                    ContainerName: sym.ContainingType
+                );
+                matches.Add((info, score));
+            }
+        }
+
+        return matches
+            .OrderByDescending(m => m.Score)
+            .ThenBy(m => m.Info.Name.Length)
+            .Take(maxResults)
+            .Select(m => m.Info)
+            .ToList();
+    }
+
     public int SymbolCount => _symbolsById.Count;
 }

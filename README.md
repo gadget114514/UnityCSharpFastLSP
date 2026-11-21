@@ -38,7 +38,8 @@ For the full detailed benchmark methodology, in-process micro-benchmarks, and co
 - **[Feature Comparison vs UnityCSharpLSP](doc/feature-comparison.md)**: In-depth comparison with Roslyn-based UnityCSharpLSP and the practical value of FastLSP.
 - **[Performance Comparison Report](doc/performance-comparison.md)**: Benchmarks across in-process logic and real stdio IPC.
 
-- **LSP Methods**: `initialize`, `shutdown`, `exit`, `didOpen`, `didChange` (incremental/full), `didClose`, `publishDiagnostics`, `documentSymbol`, `hover`, `completion`, `definition`, `references`, `formatting`, `signatureHelp`, `semanticTokens/full`, `documentHighlight`.
+- **LSP Methods**: `initialize`, `shutdown`, `exit`, `didOpen`, `didChange` (incremental/full), `didClose`, `publishDiagnostics`, `documentSymbol`, `hover`, `completion`, `definition`, `references`, `formatting`, `signatureHelp`, `semanticTokens/full`, `documentHighlight`, `workspace/symbol`.
+- **Workspace Symbol Search with Pattern Extensions**: High-speed symbol searching supporting wildcards (`*`, `?`), CamelHump abbreviations (`PC` -> `PlayerController`), and container qualification (`Player.TakeDamage`).
 - **CST Syntax Diagnostics**: Instantaneous detection of incomplete syntax elements (`CSFF001`) and bad tokens (`CSFF002`).
 - **Hierarchical Document Symbols**: Fast extraction of Namespace -> Type -> Member symbol trees.
 - **Workspace Indexing**: Background parallel scanning of all `.cs` files across `Assets/` and `Packages/`.

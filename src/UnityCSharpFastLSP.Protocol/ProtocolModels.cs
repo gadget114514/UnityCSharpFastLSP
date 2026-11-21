@@ -202,7 +202,8 @@ public sealed record ServerCapabilities(
     [property: JsonPropertyName("documentFormattingProvider")] bool DocumentFormattingProvider = true,
     [property: JsonPropertyName("signatureHelpProvider")] SignatureHelpOptions? SignatureHelpProvider = null,
     [property: JsonPropertyName("semanticTokensProvider")] SemanticTokensOptions? SemanticTokensProvider = null,
-    [property: JsonPropertyName("documentHighlightProvider")] bool DocumentHighlightProvider = true
+    [property: JsonPropertyName("documentHighlightProvider")] bool DocumentHighlightProvider = true,
+    [property: JsonPropertyName("workspaceSymbolProvider")] bool WorkspaceSymbolProvider = true
 );
 
 public sealed record ReferenceContext(
@@ -321,4 +322,15 @@ public sealed record JsonRpcRequest(
 public sealed record JsonRpcNotification(
     [property: JsonPropertyName("jsonrpc")] string JsonRpc,
     [property: JsonPropertyName("method")] string Method
+);
+
+public sealed record WorkspaceSymbolParams(
+    [property: JsonPropertyName("query")] string Query
+);
+
+public sealed record SymbolInformation(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("kind")] SymbolKind Kind,
+    [property: JsonPropertyName("location")] Location Location,
+    [property: JsonPropertyName("containerName")] string? ContainerName = null
 );

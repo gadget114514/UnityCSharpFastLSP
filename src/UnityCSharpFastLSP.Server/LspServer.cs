@@ -106,6 +106,10 @@ public sealed class LspServer
                     HandleDocumentHighlight(id, parameters);
                     break;
 
+                case "workspace/symbol":
+                    HandleWorkspaceSymbol(id, parameters);
+                    break;
+
                 default:
                     if (hasId)
                     {
@@ -157,7 +161,8 @@ public sealed class LspServer
                 DocumentFormattingProvider: true,
                 SignatureHelpProvider: new SignatureHelpOptions(["(", ","]),
                 SemanticTokensProvider: new SemanticTokensOptions(SemanticTokensProvider.Legend, Full: true),
-                DocumentHighlightProvider: true
+                DocumentHighlightProvider: true,
+                WorkspaceSymbolProvider: true
             ),
             ServerInfo: new ServerInfo("UnityCSharpFastLSP", "1.0.0-net11")
         );
@@ -422,6 +427,20 @@ public sealed class LspServer
         }
 
         _writer.WriteRawResponse(id, "[]"u8.ToArray());
+    }
+
+    private void HandleWorkspaceSymbol(object? id, JsonElement parameters)
+    {
+        string query = "";
+        if (parameters.ValueKind == JsonValueKind.Object &&
+            parameters.TryGetProperty("query", out var queryElem) &&
+            queryElem.GetString() is string q)
+        {
+            query = q;
+        }
+
+        var symbols = _state.SymbolIndex.FindWorkspaceSymbols(query);
+        _writer.WriteResponse(id, symbols, LspJsonSerializerContext.Default.ListSymbolInformation);
     }
 
     private static object? GetIdValue(JsonElement idElem)

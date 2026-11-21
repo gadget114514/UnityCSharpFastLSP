@@ -40,7 +40,7 @@ UnityCSharpFastLSP における Language Server Protocol (LSP 3.17) 各機能の
 | `textDocument/references` (参照検索) | 🟢 実装済み | **0.36 ms** | ワークスペース全ファイルの高速単語境界マッチング (`includeDeclaration` 対応) | 自前応答 | **FastLSP が高速返答 (0.36ms)** |
 | `textDocument/documentHighlight` | 🟢 実装済み | 0.1 〜 0.2 ms | 同一ファイル内におけるシンボル出現箇所の瞬時ハイライト | 自前応答 | **FastLSP が高速返答** |
 | `textDocument/documentSymbol` (アウトライン) | 🟢 実装済み | **0.18 ms** | CST 階層トラバース（名前空間 → クラス → メソッド/プロパティ） | 自前応答 | **FastLSP が高速返答** |
-| `workspace/symbol` (ワークスペース全シンボル) | 🟡 実装可能 | 0.5 〜 1.5 ms | `SymbolIndex` に対するプレフィックス/部分一致/Fuzzyインメモリ検索 | 自前返答可能 | 上流未接続時は自前 / 接続時は上流 |
+| `workspace/symbol` (ワークスペース全シンボル) | 🟢 実装済み | **0.29 ms** | **pattern拡張対応**（ワイルドカード `*`/`?`、CamelCase略称 `PC`->`PlayerController`、修飾子 `Player.Update`、部分一致・あいまい一致） | 自前応答 | **FastLSP が高速返答 (0.29ms)** |
 
 ---
 
