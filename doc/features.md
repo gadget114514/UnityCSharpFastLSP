@@ -2,6 +2,8 @@
 
 This document provides a comprehensive overview of supported Language Server Protocol (LSP) methods, Unity-specific capabilities, and explicit non-goals (out-of-scope items) in **UnityCSharpFastLSP**.
 
+For a detailed classification of all LSP 3.17 features into **Implemented**, **Feasible without latency degradation**, and **Infeasible (delegated to Roslyn proxy)**, see **[LSP Feature Plan](feature-plan.md)**.
+
 ---
 
 ## 1. Supported LSP Methods

@@ -33,6 +33,7 @@ For the full detailed benchmark methodology, in-process micro-benchmarks, and co
 
 ## Features & Comparisons
 
+- **[LSP Feature Plan & Feasibility Matrix](doc/feature-plan.md)**: Comprehensive breakdown of implemented, feasible, and infeasible LSP features.
 - **[Feature Matrix](doc/features.md)**: Supported LSP methods, Unity capabilities, and design non-goals.
 - **[Feature Comparison vs UnityCSharpLSP](doc/feature-comparison.md)**: In-depth comparison with Roslyn-based UnityCSharpLSP and the practical value of FastLSP.
 - **[Performance Comparison Report](doc/performance-comparison.md)**: Benchmarks across in-process logic and real stdio IPC.
