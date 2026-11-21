@@ -1,9 +1,12 @@
 # Intelligent Hybrid Proxy Specification
 
-UnityCSharpFastLSP provides an **Intelligent Hybrid Proxy mode** (`--proxy`) designed to deliver the best of both worlds:
-1. **Sub-millisecond responsiveness (< 0.3 ms)** for frequent interactive editor requests (completion, hover, symbols, references, semantic tokens).
-2. **Full Roslyn semantic compilation & refactoring power** for heavy workspace operations (definition jumps across external assemblies, rename, code actions, deep type analysis).
-3. **Zero initialize latency**: FastLSP responds to client `initialize` immediately (< 0.2 ms), while warming up upstream Roslyn in a non-blocking background queue.
+**Applies to**: `UnityCSharpFastLSP` v0.2.1+  
+**Executable**: `UnityCSharpFastLSP.Server.exe --proxy [options]`
+
+UnityCSharpFastLSP provides an **Intelligent Hybrid Proxy mode** (`--proxy`) designed to deliver the ultimate C# editing experience for Unity developers:
+1. **Sub-millisecond responsiveness (< 0.3 ms)** for all frequent interactive editor requests (completion, definition, hover, symbols, references, semantic tokens).
+2. **Full Roslyn semantic compilation & refactoring power** for heavy workspace operations (rename refactoring, code actions / quick-fixes, deep type analysis).
+3. **Zero initialize latency**: FastLSP responds to client `initialize` immediately (< 0.2 ms), while launching and warming up upstream Roslyn in a non-blocking background task.
 
 ---
 
@@ -11,9 +14,9 @@ UnityCSharpFastLSP provides an **Intelligent Hybrid Proxy mode** (`--proxy`) des
 
 The following table details how every LSP method is handled in **Proxy Mode** (`--proxy`) compared to **Standalone Mode**:
 
-| LSP Method | Proxy Mode Handling | Handled By | Advertised in Proxy `initialize` | Latency / Behavior |
+| LSP Method | Proxy Mode Handling | Handled By | Advertised in `initialize` | Latency / Behavior |
 | :--- | :--- | :---: | :---: | :--- |
-| `initialize` | FastLSP responds immediately to client; forwards to upstream in background | **FastLSP** (Client response) + Upstream (Warmup) | N/A | **< 0.2 ms** (Non-blocking background spawn) |
+| `initialize` | FastLSP responds immediately (< 0.2 ms); launches upstream in background | **FastLSP** (Client reply) + **Upstream** (Warmup) | N/A | **< 0.2 ms** (Non-blocking background spawn) |
 | `initialized` | Handled by FastLSP & forwarded to upstream | **Both** | N/A | Immediate |
 | `shutdown` | Handled by FastLSP & forwarded to upstream | **Both** | N/A | Clean shutdown |
 | `exit` | Handled by FastLSP & forwarded to upstream | **Both** | N/A | Process termination |
@@ -37,13 +40,67 @@ The following table details how every LSP method is handled in **Proxy Mode** (`
 | `textDocument/rename` | Forwarded to Upstream Roslyn | **Upstream (Roslyn)** | `renameProvider: true` | Heavy semantic refactoring |
 | `textDocument/codeAction` | Forwarded to Upstream Roslyn | **Upstream (Roslyn)** | `codeActionProvider: true` | Roslyn analyzers & quick fixes |
 
-> [!NOTE]
-> **Sub-Millisecond `textDocument/definition` in Proxy Mode**:
-> FastLSP provides instant definition jumps (< 0.2 ms) across local variables, parameters, self-class fields/methods, base-class inherited members, cross-file dot-member access, and static members directly from memory without blocking on upstream Roslyn. FastLSP advertises `definitionProvider: true` in both standalone and proxy modes.
+---
+
+## 2. Architecture & Request Flow
+
+The following diagram illustrates the interaction between the Client (Editor / AI Agent), FastLSP proxy frontend, and the Upstream Roslyn LSP server:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client as Editor / AI Agent
+    participant FastLSP as UnityCSharpFastLSP (Proxy)
+    participant Upstream as Upstream Roslyn (UnityCSharpLSP)
+
+    Note over Client,FastLSP: Phase 1: Non-Blocking Initialize
+    Client->>FastLSP: initialize
+    FastLSP-->>Client: initialize response (< 0.2 ms, pre-baked capabilities)
+    FastLSP->>Upstream: Spawn process in background & forward initialize
+    Client->>FastLSP: initialized, textDocument/didOpen
+    FastLSP->>FastLSP: Parse CST & index immediately (< 0.5 ms)
+    FastLSP->>Upstream: Queue & forward messages once upstream ready
+
+    Note over Client,FastLSP: Phase 2: Interactive Requests (Fast Path)
+    Client->>FastLSP: textDocument/completion, definition, hover, references
+    FastLSP-->>Client: Instant response (< 0.3 ms directly from In-Memory CST/Index)
+
+    Note over Client,Upstream: Phase 3: Heavy Refactorings (Delegated Path)
+    Client->>FastLSP: textDocument/rename, codeAction
+    FastLSP->>Upstream: Forward request
+    Upstream-->>FastLSP: Roslyn refactoring edits / code actions
+    FastLSP-->>Client: Forward response to client
+
+    Note over Client,Upstream: Phase 4: Async Compiler Diagnostics
+    Upstream-->>FastLSP: publishDiagnostics (CS0029, CS0103, etc.)
+    FastLSP-->>Client: Transparently stream compiler diagnostics
+```
 
 ---
 
-## 2. Upstream Server Discovery Priority
+## 3. High-Precision `textDocument/definition` Resolver
+
+In v0.2.1, `textDocument/definition` is fully integrated into FastLSP's fast path and verified across real-world Unity project code (`DummyProject`):
+
+1. **Local Variables & Parameters**:
+   - Scope-restricted token search inside method / lambda body.
+   - Accurately resolves local variable declarations (`int localDmg = 15;`) and method parameters (`ApplyDamage(int amount)`).
+   - Prevents self-loop when cursor is already on the declaration token.
+2. **Self-Class Fields & Methods**:
+   - Matches members via `SymbolIndex.FindMembersByContainingType(selfClassName)`.
+   - Distinguishes private/public fields (`private GameConfig config;`) and methods (`private void Report(int amount)`).
+3. **Inheritance & Base Class Members**:
+   - Traverses type hierarchy via `SymbolIndex.GetAllBaseTypes(selfClassName)`.
+   - Resolves inherited members (e.g. `Player` calling base `Entity.Heal()`).
+4. **Cross-File Member Access**:
+   - Infers variable type (`var enemy = new Enemy()` -> `Enemy`, `private GameConfig config` -> `GameConfig`).
+   - Resolves dot-access (`config.MaxHealth`) directly to the target declaration in external files.
+5. **Static Calls & Class Declarations**:
+   - Resolves static methods (`Calculator.Add`) and type names (`new Player()`, `: IDamageable`).
+
+---
+
+## 4. Upstream Server Discovery Priority
 
 When `--proxy` is enabled, FastLSP locates the upstream Roslyn LSP server (e.g. `UnityCSharpLSP.Server.exe` or `UnityCSharpLSP.exe`) strictly using the following 5-tier priority:
 
@@ -62,19 +119,21 @@ flowchart TD
     P4 -- Not Found --> P5["5. Terminate with Exit Code 1 (Fatal Error)"]
 ```
 
-1. **Priority 1 (`--upstream <path>`)**: Explicit command-line argument.
-2. **Priority 2 (`UNITY_CSHARP_LSP_PATH`)**: Environment variable pointing to upstream server binary.
-3. **Priority 3 (OS API Resolution via `PATH`)**: Direct invocation delegating path lookup to the OS (`CreateProcessW`).
-4. **Priority 4 (Standard Directory Fallback)**: Checks `%LOCALAPPDATA%\Programs\UnityCSharpLSP`, `%PROGRAMFILES%\UnityCSharpLSP`, and typical dotnet tool locations.
-5. **Priority 5 (Error)**: If all four search stages fail, FastLSP writes an actionable error message to `stderr` and exits immediately with code `1`.
+| Tier | Search Strategy | Detail |
+| :---: | :--- | :--- |
+| **1** | **Explicit `--upstream <path>`** | Command line argument specifying the exact executable path. |
+| **2** | **`UNITY_CSHARP_LSP_PATH` Env Var** | Environment variable pointing to upstream binary. |
+| **3** | **OS API Resolution via `PATH`** | Direct invocation delegating path lookup to the OS (`CreateProcessW`). |
+| **4** | **Standard Directory Fallback** | Checks `%LOCALAPPDATA%\Programs\UnityCSharpLSP`, `%PROGRAMFILES%\UnityCSharpLSP`, and dotnet tools. |
+| **5** | **Fatal Error Termination** | If all 4 search tiers fail, outputs an actionable error message to `stderr` and terminates with exit code `1`. |
 
 ---
 
-## 3. Asynchronous Warmup & Pending Queue Architecture
+## 5. Non-Blocking Startup & Pending Queue Architecture
 
-To eliminate the 800 ms 〜 1500 ms cold startup delay of Roslyn from the user's editing experience:
+To completely eliminate the 800 ms 〜 1500 ms cold startup delay of Roslyn from the user experience:
 
 1. **Background Launch**: FastLSP spawns the upstream process on a worker thread (`InitUpstreamBackground`).
 2. **Immediate Capability Reply**: The client receives FastLSP's `ServerCapabilities` within **< 0.2 ms**.
-3. **Pending Message Buffer**: Any early messages sent by the client while Roslyn is still booting (`initialize`, `initialized`, `textDocument/didOpen`) are enqueued in a thread-safe `ConcurrentQueue<byte[]> _pendingMessages`.
-4. **Automatic Flush**: The instant upstream stdio streams are ready, all buffered messages are flushed in FIFO order, ensuring zero lost states or race conditions.
+3. **Pending Message Buffer**: Any early messages sent by the client while Roslyn is booting (`initialize`, `initialized`, `textDocument/didOpen`) are enqueued in a thread-safe `ConcurrentQueue<byte[]> _pendingMessages`.
+4. **Automatic Flush**: The instant upstream stdio streams are ready, all buffered messages are flushed in FIFO order, ensuring zero dropped messages or desynchronizations.
