@@ -31,9 +31,11 @@ For the full detailed benchmark methodology, in-process micro-benchmarks, and co
 
 ---
 
-## Features
+## Features & Comparisons
 
-For complete method support and explicit architectural non-goals, see [Feature Matrix](doc/features.md).
+- **[Feature Matrix](doc/features.md)**: Supported LSP methods, Unity capabilities, and design non-goals.
+- **[Feature Comparison vs UnityCSharpLSP](doc/feature-comparison.md)**: In-depth comparison with Roslyn-based UnityCSharpLSP and the practical value of FastLSP.
+- **[Performance Comparison Report](doc/performance-comparison.md)**: Benchmarks across in-process logic and real stdio IPC.
 
 - **LSP Methods**: `initialize`, `shutdown`, `exit`, `didOpen`, `didChange` (incremental/full), `didClose`, `publishDiagnostics`, `documentSymbol`, `hover`, `completion`, `definition`, `references`.
 - **CST Syntax Diagnostics**: Instantaneous detection of incomplete syntax elements (`CSFF001`) and bad tokens (`CSFF002`).
