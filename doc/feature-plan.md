@@ -8,7 +8,7 @@ UnityCSharpFastLSP における Language Server Protocol (LSP 3.17) 各機能の
 
 | 区分 | 定義 | 主なアプローチ | 目標レイテンシ |
 | :--- | :--- | :--- | :--- |
-| **🟢 実装済み (Implemented)** | v0.1.0 時点で実装・テスト・ベンチマーク（`lsbench` 0.0% エラー）済みの機能。 | CST (具象構文木) 走査 + In-Memory `SymbolIndex` ハッシュ探索 + 軽量型推論 + Unity 静的辞書 | **0.01 ms 〜 0.5 ms** |
+| **🟢 実装済み (Implemented)** | v0.2.0 時点で実装・テスト・ベンチマーク（`lsbench` 0.0% エラー）済みの機能。 | CST (具象構文木) 走査 + In-Memory `SymbolIndex` ハッシュ探索 + 軽量型推論 + Unity 静的辞書 | **0.01 ms 〜 0.5 ms** |
 | **🟡 性能を維持したまま実装可能 (Feasible)** | 外部 DLL メタデータ解析や Roslyn セマンティックモデルを使わず、既存の CST 構造解析とインデックス探索のみでサブミリ秒で提供可能な機能。 | CST ノード走査、AST スパン計算、字句トークン解析、局所構文解析 | **0.05 ms 〜 1.0 ms** |
 | **🔴 性能劣化するので実装できない (Infeasible)** | 外部アセンブリ（`UnityEngine.dll`, BCL 等）のメタデータロード、完全な型推論・多重オーバーロード解決・暗黙的型変換グラフ探索が必須となり、Roslyn 同等のメモリ消費（数百MB〜数GB）とレイテンシ（数十〜数百ms）が発生するため、FastLSP 単体では意図的に実装しない機能。<br>※これらは **Intelligent Hybrid Proxy (`--proxy`)** により、背後の Roslyn / UnityCSharpLSP へ自動委譲されます。 | Roslyn コンパイラセマンティクス、完全型バインディング、メタデータ DLL 読み込み | **10 ms 〜 500 ms** (FastLSP の設計思想に反するため単体非対応) |
 

@@ -57,7 +57,7 @@ When an AI agent (such as OpenCode or Claude) is reading, modifying, and generat
 
 FastLSP is not just a flat identifier matcher. It incorporates high-speed structural inference:
 
-### What Is Already Implemented (v0.1.0):
+### What Is Already Implemented (v0.2.0):
 1. **Lightweight Type Inference for Local Variables & Parameters**:
    - Deduces `x`'s type from `var x = new Foo()`, `Foo x = ...;`, `(Foo target)`, and fields (`[SerializeField] private Foo _foo;`).
 2. **Member Access Filtering on Dots (`x.`)**:

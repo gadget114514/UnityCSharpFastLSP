@@ -164,7 +164,7 @@ public sealed class LspServer
                 DocumentHighlightProvider: true,
                 WorkspaceSymbolProvider: true
             ),
-            ServerInfo: new ServerInfo("UnityCSharpFastLSP", "1.0.0-net11")
+            ServerInfo: new ServerInfo("UnityCSharpFastLSP", "0.2.0")
         );
 
         _writer.WriteResponse(id, result, LspJsonSerializerContext.Default.InitializeResult);
