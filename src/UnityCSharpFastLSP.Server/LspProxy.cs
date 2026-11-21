@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using UnityCSharpFastLSP.Protocol;
@@ -8,16 +9,17 @@ public sealed class LspProxy : IDisposable
 {
     private readonly LspServer _fastServer;
     private readonly Stream _clientOutput;
-    private readonly Process? _upstreamProcess;
-    private readonly StreamWriter? _upstreamInput;
     private readonly CancellationTokenSource _cts = new();
+    private readonly ConcurrentQueue<byte[]> _pendingMessages = new();
+    private Process? _upstreamProcess;
+    private StreamWriter? _upstreamInput;
+    private volatile bool _upstreamReady;
 
     private static readonly HashSet<string> FastMethods = new(StringComparer.Ordinal)
     {
         "textDocument/completion",
         "textDocument/hover",
         "textDocument/formatting",
-        "textDocument/definition",
         "textDocument/declaration",
         "textDocument/implementation",
         "textDocument/typeDefinition",
@@ -32,14 +34,34 @@ public sealed class LspProxy : IDisposable
     public LspProxy(Stream clientOutput, string? upstreamExecutablePath = null)
     {
         _clientOutput = clientOutput;
-        _fastServer = new LspServer(clientOutput);
+        _fastServer = new LspServer(clientOutput, isProxy: true);
 
-        _upstreamProcess = StartUpstreamProcess(upstreamExecutablePath);
-        _upstreamInput = _upstreamProcess.StandardInput;
+        // バックグラウンドで Upstream を非同期起動 (メインスレッドおよび initialize を一切待たせない！)
+        Task.Run(() => InitUpstreamBackground(upstreamExecutablePath, _cts.Token));
+    }
 
-        // Upstream の出力を非同期に読み取りクライアントに転送
-        Task.Run(() => ReadUpstreamLoop(_upstreamProcess.StandardOutput.BaseStream, _cts.Token));
-        Task.Run(() => ReadUpstreamStderrLoop(_upstreamProcess.StandardError, _cts.Token));
+    private void InitUpstreamBackground(string? upstreamExecutablePath, CancellationToken ct)
+    {
+        try
+        {
+            _upstreamProcess = StartUpstreamProcess(upstreamExecutablePath);
+            _upstreamInput = _upstreamProcess.StandardInput;
+            _upstreamReady = true;
+
+            // Upstream の出力を非同期に読み取りクライアントに転送
+            Task.Run(() => ReadUpstreamLoop(_upstreamProcess.StandardOutput.BaseStream, ct));
+            Task.Run(() => ReadUpstreamStderrLoop(_upstreamProcess.StandardError, ct));
+
+            // 起動前に蓄積されていた通知/リクエストを一気にフラッシュ転送
+            while (_pendingMessages.TryDequeue(out var msg))
+            {
+                ForwardDirect(msg);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[LspProxy] Failed to initialize upstream server in background: {ex.Message}");
+        }
     }
 
     public bool HandleClientMessage(byte[] message)
@@ -68,10 +90,10 @@ public sealed class LspProxy : IDisposable
         // 3. initialize / initialized / shutdown / exit
         if (method == "initialize")
         {
-            // FastLSP 側で初期化
+            // FastLSP 側で Capabilities (rename, codeAction を含む) を即座に返答 (< 0.2ms)！
             _fastServer.HandleMessage(message);
 
-            // Upstream にも initialize を転送
+            // Upstream にも非同期転送して Roslyn のバックグラウンド初期化を開始
             ForwardToUpstream(message);
             return true;
         }
@@ -83,19 +105,25 @@ public sealed class LspProxy : IDisposable
             return res;
         }
 
-        // 4. FastLSP 単体ではできない重い機能 (rename, codeAction, workspace/symbol など)
-        // Upstream (UnityCSharpLSP) にすべて委譲！
-        if (_upstreamProcess != null && !_upstreamProcess.HasExited)
-        {
-            ForwardToUpstream(message);
-            return true;
-        }
-
-        // Upstream がない場合は FastLSP のデフォルトフォールバック
-        return _fastServer.HandleMessage(message);
+        // 4. FastLSP 単体ではできない重い機能 (rename, codeAction など)
+        // Upstream (UnityCSharpLSP) に委譲
+        ForwardToUpstream(message);
+        return true;
     }
 
     private void ForwardToUpstream(byte[] message)
+    {
+        if (_upstreamReady && _upstreamInput != null && _upstreamProcess != null && !_upstreamProcess.HasExited)
+        {
+            ForwardDirect(message);
+        }
+        else
+        {
+            _pendingMessages.Enqueue(message);
+        }
+    }
+
+    private void ForwardDirect(byte[] message)
     {
         if (_upstreamInput == null || _upstreamProcess == null || _upstreamProcess.HasExited)
         {

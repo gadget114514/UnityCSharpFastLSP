@@ -9,12 +9,14 @@ public sealed class LspServer
 {
     private readonly ServerState _state;
     private readonly LspMessageWriter _writer;
+    private readonly bool _isProxy;
     private bool _isShutdown;
 
-    public LspServer(Stream output)
+    public LspServer(Stream output, bool isProxy = false)
     {
         _writer = new LspMessageWriter(output);
         _state = new ServerState(_writer);
+        _isProxy = isProxy;
     }
 
     public bool HandleMessage(byte[] message)
@@ -155,14 +157,16 @@ public sealed class LspServer
                 TextDocumentSync: 2, // Incremental
                 HoverProvider: true,
                 CompletionProvider: new CompletionOptions(ResolveProvider: false, TriggerCharacters: [".", " "]),
-                DefinitionProvider: true,
+                DefinitionProvider: _isProxy ? null : true,
                 ReferencesProvider: true,
                 DocumentSymbolProvider: true,
                 DocumentFormattingProvider: true,
                 SignatureHelpProvider: new SignatureHelpOptions(["(", ","]),
                 SemanticTokensProvider: new SemanticTokensOptions(SemanticTokensProvider.Legend, Full: true),
                 DocumentHighlightProvider: true,
-                WorkspaceSymbolProvider: true
+                WorkspaceSymbolProvider: true,
+                RenameProvider: _isProxy ? true : null,
+                CodeActionProvider: _isProxy ? true : null
             ),
             ServerInfo: new ServerInfo("UnityCSharpFastLSP", "0.2.0")
         );

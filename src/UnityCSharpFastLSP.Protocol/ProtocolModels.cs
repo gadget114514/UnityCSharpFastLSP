@@ -193,7 +193,7 @@ public sealed record ServerCapabilities(
     [property: JsonPropertyName("textDocumentSync")] int TextDocumentSync,
     [property: JsonPropertyName("hoverProvider")] bool HoverProvider = true,
     [property: JsonPropertyName("completionProvider")] CompletionOptions? CompletionProvider = null,
-    [property: JsonPropertyName("definitionProvider")] bool DefinitionProvider = true,
+    [property: JsonPropertyName("definitionProvider")] bool? DefinitionProvider = true,
     [property: JsonPropertyName("declarationProvider")] bool DeclarationProvider = true,
     [property: JsonPropertyName("implementationProvider")] bool ImplementationProvider = true,
     [property: JsonPropertyName("typeDefinitionProvider")] bool TypeDefinitionProvider = true,
@@ -203,7 +203,9 @@ public sealed record ServerCapabilities(
     [property: JsonPropertyName("signatureHelpProvider")] SignatureHelpOptions? SignatureHelpProvider = null,
     [property: JsonPropertyName("semanticTokensProvider")] SemanticTokensOptions? SemanticTokensProvider = null,
     [property: JsonPropertyName("documentHighlightProvider")] bool DocumentHighlightProvider = true,
-    [property: JsonPropertyName("workspaceSymbolProvider")] bool WorkspaceSymbolProvider = true
+    [property: JsonPropertyName("workspaceSymbolProvider")] bool WorkspaceSymbolProvider = true,
+    [property: JsonPropertyName("renameProvider")] bool? RenameProvider = null,
+    [property: JsonPropertyName("codeActionProvider")] bool? CodeActionProvider = null
 );
 
 public sealed record ReferenceContext(
@@ -334,3 +336,16 @@ public sealed record SymbolInformation(
     [property: JsonPropertyName("location")] Location Location,
     [property: JsonPropertyName("containerName")] string? ContainerName = null
 );
+
+public static class UriHelper
+{
+    public static string Normalize(string uri)
+    {
+        if (string.IsNullOrWhiteSpace(uri)) return uri;
+        if (Uri.TryCreate(uri, UriKind.Absolute, out var parsed) && parsed.IsFile)
+        {
+            return parsed.AbsoluteUri;
+        }
+        return uri;
+    }
+}
