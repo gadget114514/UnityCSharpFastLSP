@@ -9,6 +9,7 @@ public sealed class SymbolIndex
     private readonly ConcurrentDictionary<string, List<int>> _fileToSymbolIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<int, Symbol> _symbolsById = new();
     private readonly ConcurrentDictionary<int, HashSet<int>> _nameIdToSymbolIds = new();
+    private readonly ConcurrentDictionary<int, HashSet<int>> _containingTypeToSymbolIds = new();
     private int _nextSymbolId = 1;
 
     public SymbolStringTable StringTable => _stringTable;
@@ -29,6 +30,18 @@ public sealed class SymbolIndex
                             idSet.Remove(id);
                         }
                     }
+
+                    if (!string.IsNullOrEmpty(oldSym.ContainingType))
+                    {
+                        int cId = _stringTable.GetOrAdd(oldSym.ContainingType);
+                        if (_containingTypeToSymbolIds.TryGetValue(cId, out var cSet))
+                        {
+                            lock (cSet)
+                            {
+                                cSet.Remove(id);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -47,6 +60,16 @@ public sealed class SymbolIndex
             lock (idSet)
             {
                 idSet.Add(id);
+            }
+
+            if (!string.IsNullOrEmpty(sym.ContainingType))
+            {
+                int cId = _stringTable.GetOrAdd(sym.ContainingType);
+                var cSet = _containingTypeToSymbolIds.GetOrAdd(cId, _ => new HashSet<int>());
+                lock (cSet)
+                {
+                    cSet.Add(id);
+                }
             }
         }
 
@@ -96,6 +119,31 @@ public sealed class SymbolIndex
         int nameId = _stringTable.GetOrAdd(name);
 
         if (_nameIdToSymbolIds.TryGetValue(nameId, out var idSet))
+        {
+            List<int> ids;
+            lock (idSet)
+            {
+                ids = new List<int>(idSet);
+            }
+
+            foreach (int id in ids)
+            {
+                if (_symbolsById.TryGetValue(id, out var sym))
+                {
+                    results.Add(sym);
+                }
+            }
+        }
+
+        return results;
+    }
+
+    public List<Symbol> FindMembersByContainingType(string containingType)
+    {
+        var results = new List<Symbol>();
+        int typeNameId = _stringTable.GetOrAdd(containingType);
+
+        if (_containingTypeToSymbolIds.TryGetValue(typeNameId, out var idSet))
         {
             List<int> ids;
             lock (idSet)

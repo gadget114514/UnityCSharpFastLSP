@@ -37,11 +37,48 @@ For the full detailed benchmark methodology, in-process micro-benchmarks, and co
 - **[Feature Comparison vs UnityCSharpLSP](doc/feature-comparison.md)**: In-depth comparison with Roslyn-based UnityCSharpLSP and the practical value of FastLSP.
 - **[Performance Comparison Report](doc/performance-comparison.md)**: Benchmarks across in-process logic and real stdio IPC.
 
-- **LSP Methods**: `initialize`, `shutdown`, `exit`, `didOpen`, `didChange` (incremental/full), `didClose`, `publishDiagnostics`, `documentSymbol`, `hover`, `completion`, `definition`, `references`.
+- **LSP Methods**: `initialize`, `shutdown`, `exit`, `didOpen`, `didChange` (incremental/full), `didClose`, `publishDiagnostics`, `documentSymbol`, `hover`, `completion`, `definition`, `references`, `formatting`.
 - **CST Syntax Diagnostics**: Instantaneous detection of incomplete syntax elements (`CSFF001`) and bad tokens (`CSFF002`).
 - **Hierarchical Document Symbols**: Fast extraction of Namespace -> Type -> Member symbol trees.
 - **Workspace Indexing**: Background parallel scanning of all `.cs` files across `Assets/` and `Packages/`.
+- **Scoping & Member Filtering**: Dot-member completion (`x.`) narrows candidates strictly to the inferred type's members instead of fuzzy token dumps.
 - **LLM Agent Ready**: Self-describing `--print-config` and `--help` for direct integration with AI coding agents.
+
+---
+
+## Pros & Cons: Choosing Between FastLSP and Roslyn
+
+Why does **UnityCSharpFastLSP** exist when Roslyn-based language servers (`UnityCSharpLSP`, `csharp-ls`, `OmniSharp`) already exist?
+
+### The Core Problem with Roslyn in Unity
+Roslyn is a full compiler. To provide completions, it must build a complete compilation workspace with all referenced assemblies (`UnityEngine.CoreModule.dll`, package DLLs, etc.) and project definitions (`.csproj`/`.sln`). In real Unity development:
+1. **Compilation Latency**: Per-keystroke Roslyn semantic model queries take 10–50 ms.
+2. **Cold-Start Penalty**: Booting Roslyn and loading Unity solution projects takes seconds and hundreds of megabytes of RAM.
+3. **Fragile Synchronization**: When Unity updates package caches or regenerates `.csproj` files, Roslyn gets desynchronized, stalling the editor.
+4. **Agent Friction**: Autonomous AI coding agents (Claude Code, OpenCode, Cursor, Antigravity) execute tight edit-test-check loops where a 10 ms delay and heavy initialization kills turnaround velocity.
+
+### FastLSP Pros (Why FastLSP Wins)
+- ⚡ **Sub-Millisecond Response (<0.2 ms)**: Real stdio IPC completion in ~0.15 ms and hover in ~0.10 ms (**~90x faster** than Roslyn baseline).
+- ⚡ **Microsecond Incremental Parsing (<30 µs)**: Method-body keystrokes re-synthesize CSTs instantaneously via token shifting.
+- 🎯 **Lightweight Type Inference & Member Filtering**: When typing `enemy.`, completions are filtered strictly to members of `Enemy` (methods, properties, fields) using fast syntax-level inference for `var x = new T()`, `T x`, `this.`, parameters, and fields.
+- 🛡️ **Zero Project File / MSBuild Dependency**: Operates directly on raw C# source files and folders. Works flawlessly even if `.csproj` is missing, corrupted, or mid-compilation.
+- 🎮 **Built-in Unity Intelligence**: Native awareness of 13 MonoBehaviour lifecycle messages (`Awake`, `Start`, `Update`, etc.), serialization attributes (`[SerializeField]`), and `#if UNITY_EDITOR` preprocessors without loading Unity DLLs.
+- 🪶 **Minimal Resource Footprint**: Cold-starts in ~480 ms, consumes < 15 MB of RAM, and runs as a self-contained single-file binary.
+
+### FastLSP Cons (When You Should Use Roslyn Instead)
+- ❌ **No Deep Compiler Diagnostics**: Does not emit semantic type errors (e.g., `CS0103: name does not exist`, `CS0029: cannot implicitly convert type`). It only emits syntax errors (`CSFF001`/`CSFF002`).
+- ❌ **No Complex Overload Resolution**: Cannot resolve complex multi-generic type constraints across foreign external assemblies.
+- ❌ **No Solution-Wide Semantic Refactoring**: Does not support Roslyn-style semantic `Rename Symbol` across external compiled DLLs.
+- ❌ **Heuristic Inference**: Complex fluent method-chaining type inference (`list.Where(...).Select(...).First().`) relies on best-effort heuristic matching rather than a full bound symbol tree.
+
+### Summary: Which One Should You Use?
+
+| Use Case | Recommended Tool | Reason |
+| :--- | :---: | :--- |
+| **Interactive Typing & Code Navigation** | **UnityCSharpFastLSP** | Instant typing feel; zero lag on completion and hover. |
+| **Autonomous AI Coding Agents** | **UnityCSharpFastLSP** | High-frequency tool execution with negligible CPU/memory overhead. |
+| **Fast Prototyping / Broken Codebases** | **UnityCSharpFastLSP** | Always works, even when project compilation is broken. |
+| **Final CI / Deep Semantic Refactoring** | **UnityCSharpLSP (Roslyn)** | Full compiler validation and cross-assembly symbol renames. |
 
 ---
 

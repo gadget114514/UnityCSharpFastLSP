@@ -198,4 +198,112 @@ public class Phase1To3IntegrationTests
         // 出力ストリームにレスポンスが書き込まれていること
         Assert.True(outputStream.Length > 0);
     }
+
+    [Fact]
+    public void DotMemberCompletionFiltersByTypeForVarNew()
+    {
+        const string code = """
+            public class Enemy
+            {
+                public int Hp;
+                public void TakeDamage(int dmg) {}
+            }
+
+            public class GameController
+            {
+                void Update()
+                {
+                    var enemy = new Enemy();
+                    enemy.
+                }
+            }
+            """;
+        var snapshot = CsffSyntaxAdapter.Parse(code);
+        var index = new SymbolIndex();
+        index.UpdateFileSymbols("file:///Test.cs", SymbolExtractor.ExtractSymbols("file:///Test.cs", snapshot));
+        var model = new DocumentSemanticModel(snapshot, index);
+
+        int dotOffset = code.IndexOf("enemy.", StringComparison.Ordinal) + "enemy.".Length;
+        var (line, col) = snapshot.Lines.GetPosition(dotOffset);
+
+        var completions = CompletionProvider.GetCompletions(model, new Position(line, col));
+        Assert.NotNull(completions);
+        Assert.Contains(completions.Items, c => c.Label == "Hp");
+        Assert.Contains(completions.Items, c => c.Label == "TakeDamage");
+        // Unrelated symbols or methods must NOT be present
+        Assert.DoesNotContain(completions.Items, c => c.Label == "Update");
+        Assert.DoesNotContain(completions.Items, c => c.Label == "Awake");
+    }
+
+    [Fact]
+    public void DotMemberCompletionSupportsThisAndExplicitType()
+    {
+        const string code = """
+            public class Player
+            {
+                public int Health;
+                public void Attack() {}
+
+                void InternalMethod()
+                {
+                    this.
+                }
+
+                void OtherMethod(Player target)
+                {
+                    target.
+                }
+            }
+            """;
+        var snapshot = CsffSyntaxAdapter.Parse(code);
+        var index = new SymbolIndex();
+        index.UpdateFileSymbols("file:///Player.cs", SymbolExtractor.ExtractSymbols("file:///Player.cs", snapshot));
+        var model = new DocumentSemanticModel(snapshot, index);
+
+        // Test this.
+        int thisOffset = code.IndexOf("this.", StringComparison.Ordinal) + "this.".Length;
+        var (tLine, tCol) = snapshot.Lines.GetPosition(thisOffset);
+        var thisCompletions = CompletionProvider.GetCompletions(model, new Position(tLine, tCol));
+        Assert.NotNull(thisCompletions);
+        Assert.Contains(thisCompletions.Items, c => c.Label == "Health");
+        Assert.Contains(thisCompletions.Items, c => c.Label == "Attack");
+
+        // Test parameter target.
+        int targetOffset = code.IndexOf("target.", StringComparison.Ordinal) + "target.".Length;
+        var (pLine, pCol) = snapshot.Lines.GetPosition(targetOffset);
+        var targetCompletions = CompletionProvider.GetCompletions(model, new Position(pLine, pCol));
+        Assert.NotNull(targetCompletions);
+        Assert.Contains(targetCompletions.Items, c => c.Label == "Health");
+        Assert.Contains(targetCompletions.Items, c => c.Label == "Attack");
+    }
+
+    [Fact]
+    public void CrossFileMemberCompletionViaSymbolIndex()
+    {
+        var enemySnapshot = CsffSyntaxAdapter.Parse("public class Boss { public int Shield; public void Roar() {} }");
+        var index = new SymbolIndex();
+        index.UpdateFileSymbols("file:///Boss.cs", SymbolExtractor.ExtractSymbols("file:///Boss.cs", enemySnapshot));
+
+        const string usageCode = """
+            public class Battle
+            {
+                private Boss _boss;
+                void Fight()
+                {
+                    _boss.
+                }
+            }
+            """;
+        var usageSnapshot = CsffSyntaxAdapter.Parse(usageCode);
+        var model = new DocumentSemanticModel(usageSnapshot, index);
+
+        int offset = usageCode.IndexOf("_boss.", StringComparison.Ordinal) + "_boss.".Length;
+        var (line, col) = usageSnapshot.Lines.GetPosition(offset);
+
+        var completions = CompletionProvider.GetCompletions(model, new Position(line, col));
+        Assert.NotNull(completions);
+        Assert.Contains(completions.Items, c => c.Label == "Shield");
+        Assert.Contains(completions.Items, c => c.Label == "Roar");
+        Assert.DoesNotContain(completions.Items, c => c.Label == "Fight");
+    }
 }

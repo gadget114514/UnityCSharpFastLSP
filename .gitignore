@@ -6,6 +6,7 @@ out/
 *.user
 *.suo
 *.log
+artifacts/
 .hancho/
 .claude/
 .zig-cache/

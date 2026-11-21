@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using UnityCSharpFastLSP.Protocol;
 using UnityCSharpFastLSP.Syntax;
 using CsffNodeKind = Csff.Lexer.NodeKind;
@@ -9,25 +10,27 @@ public static class ScopedResolver
 {
     public static List<CompletionItem> ResolveMemberCompletions(
         DocumentSemanticModel model,
-        string targetIdentifier)
+        string targetIdentifier,
+        Position? position = null)
     {
         var items = new List<CompletionItem>();
 
-        // targetIdentifier の型名をスコープから推論
-        string? typeName = ResolveVariableType(model.Snapshot, targetIdentifier);
+        int cursorOffset = position.HasValue
+            ? model.Snapshot.Lines.GetOffset(position.Value.Line, position.Value.Character)
+            : -1;
+
+        // targetIdentifier の型名をスコープや構文から推論
+        string? typeName = ResolveVariableType(model.Snapshot, targetIdentifier, cursorOffset);
         if (string.IsNullOrEmpty(typeName))
         {
-            typeName = targetIdentifier; // 型名直接アクセス（static member）の可能性
+            typeName = targetIdentifier; // 型名直接アクセス（static member または未解決）
         }
 
-        // SymbolIndex から、その ContainingType に属するメンバーのみを厳格に抽出
-        var matchingSymbols = model.Index.FindSymbolsByName(typeName);
+        // SymbolIndex から、その型名（クラス/構造体/インターフェース）の宣言を探索
         string resolvedType = typeName;
-
-        // クラスシンボルが存在する場合
         foreach (var sym in model.Index.FindSymbolsByName(typeName))
         {
-            if (sym.Kind is SymbolKind.Class or SymbolKind.Struct or SymbolKind.Interface)
+            if (sym.Kind is SymbolKind.Class or SymbolKind.Struct or SymbolKind.Interface or SymbolKind.Enum)
             {
                 resolvedType = sym.Name;
                 break;
@@ -36,8 +39,15 @@ public static class ScopedResolver
 
         // resolvedType のメンバーを抽出
         var members = GetMembersOfType(model, resolvedType);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
         foreach (var m in members)
         {
+            if (!seen.Add(m.Name))
+            {
+                continue;
+            }
+
             items.Add(new CompletionItem(
                 Label: m.Name,
                 Kind: m.Kind switch
@@ -87,7 +97,6 @@ public static class ScopedResolver
                         token.Start >= 0 && token.Start + token.Length <= snapshot.Source.Length &&
                         snapshot.Source.Substring(token.Start, token.Length) == word)
                     {
-                        // 宣言位置らしきもの（自身以外の最初の登場）
                         var (line, col) = snapshot.Lines.GetPosition(token.Start);
                         return [new Location(uri, new Protocol.Range(new Position(line, col), new Position(line, col + token.Length)))];
                     }
@@ -126,66 +135,137 @@ public static class ScopedResolver
         return model.Index.FindDefinitions(word);
     }
 
-    private static string? ResolveVariableType(DocumentSnapshot snapshot, string variableName)
+    public static string? ResolveVariableType(DocumentSnapshot snapshot, string variableName, int cursorOffset = -1)
     {
-        // ソース内から "Type variableName" または "var variableName = new Type" のパターンを探索
-        string source = snapshot.Source;
-        int idx = source.IndexOf(variableName, StringComparison.Ordinal);
-        if (idx < 0) return null;
-
-        // "new Type" パターン
-        int assignIdx = source.IndexOf('=', idx);
-        if (assignIdx >= 0 && assignIdx < idx + 50)
+        if (variableName == "this")
         {
-            int newIdx = source.IndexOf("new ", assignIdx, StringComparison.Ordinal);
-            if (newIdx >= 0 && newIdx < assignIdx + 10)
+            if (cursorOffset >= 0)
             {
-                int typeStart = newIdx + 4;
-                while (typeStart < source.Length && char.IsWhiteSpace(source[typeStart])) typeStart++;
-                int typeEnd = typeStart;
-                while (typeEnd < source.Length && (char.IsLetterOrDigit(source[typeEnd]) || source[typeEnd] == '_')) typeEnd++;
-                if (typeEnd > typeStart)
+                int nodeIdx = snapshot.FindNodeAt(cursorOffset);
+                while (nodeIdx >= 0)
                 {
-                    return source.Substring(typeStart, typeEnd - typeStart);
+                    var node = snapshot.Nodes[nodeIdx];
+                    if (node.Kind is (int)CsffNodeKind.ClassDeclaration or (int)CsffNodeKind.StructDeclaration)
+                    {
+                        return CsffSyntaxAdapter.FindIdentifier(snapshot, node, out _, out _);
+                    }
+                    nodeIdx = node.Parent;
                 }
+            }
+            return null;
+        }
+
+        string source = snapshot.Source;
+
+        // 1. カーソル位置がメソッド内なら、そのメソッドのローカルスコープを優先探索
+        if (cursorOffset >= 0)
+        {
+            int enclosingNode = snapshot.FindNodeAt(cursorOffset);
+            while (enclosingNode >= 0)
+            {
+                var node = snapshot.Nodes[enclosingNode];
+                if (node.Kind is (int)CsffNodeKind.MethodDeclaration
+                    or (int)CsffNodeKind.ConstructorDeclaration
+                    or (int)CsffNodeKind.LocalFunctionStatement
+                    or (int)CsffNodeKind.PropertyDeclaration)
+                {
+                    var (mStart, mLen) = snapshot.SourceSpan(enclosingNode);
+                    if (mStart >= 0 && mStart + mLen <= source.Length)
+                    {
+                        string methodText = source.Substring(mStart, mLen);
+                        string? localType = FindTypeInText(methodText, variableName);
+                        if (!string.IsNullOrEmpty(localType))
+                        {
+                            return localType;
+                        }
+                    }
+                    break;
+                }
+                enclosingNode = node.Parent;
+            }
+
+            // 2. 所属クラスのフィールド・プロパティから探索
+            enclosingNode = snapshot.FindNodeAt(cursorOffset);
+            while (enclosingNode >= 0)
+            {
+                var node = snapshot.Nodes[enclosingNode];
+                if (node.Kind is (int)CsffNodeKind.ClassDeclaration
+                    or (int)CsffNodeKind.StructDeclaration)
+                {
+                    var (cStart, cLen) = snapshot.SourceSpan(enclosingNode);
+                    if (cStart >= 0 && cStart + cLen <= source.Length)
+                    {
+                        string classText = source.Substring(cStart, cLen);
+                        string? fieldType = FindTypeInText(classText, variableName);
+                        if (!string.IsNullOrEmpty(fieldType))
+                        {
+                            return fieldType;
+                        }
+                    }
+                    break;
+                }
+                enclosingNode = node.Parent;
             }
         }
 
-        // "Type variableName" パターン（直前の単語を取得）
-        int p = idx - 1;
-        while (p >= 0 && char.IsWhiteSpace(source[p])) p--;
-        int endWord = p + 1;
-        while (p >= 0 && (char.IsLetterOrDigit(source[p]) || source[p] == '_')) p--;
-        int startWord = p + 1;
+        // 3. ドキュメント全体からのパターン探索
+        return FindTypeInText(source, variableName);
+    }
 
-        if (endWord > startWord)
+    private static string? FindTypeInText(string text, string variableName)
+    {
+        // パターン1: var variableName = new Type(...)
+        var varNewRegex = new Regex(
+            $@"\bvar\s+{Regex.Escape(variableName)}\s*=\s*new\s+([A-Za-z0-9_]+)",
+            RegexOptions.Compiled);
+        var matchNew = varNewRegex.Match(text);
+        if (matchNew.Success)
         {
-            string prev = source.Substring(startWord, endWord - startWord);
-            if (prev != "var" && prev != "private" && prev != "public" && prev != "protected" && prev != "return")
+            return matchNew.Groups[1].Value;
+        }
+
+        // パターン2: Type variableName (宣言 / 引数 / フィールド)
+        var typedVarRegex = new Regex(
+            $@"\b([A-Za-z0-9_]+)\s+{Regex.Escape(variableName)}\b",
+            RegexOptions.Compiled);
+        foreach (Match match in typedVarRegex.Matches(text))
+        {
+            string t = match.Groups[1].Value;
+            if (!IsReservedKeyword(t))
             {
-                return prev;
+                return t;
             }
         }
 
         return null;
     }
 
+    private static bool IsReservedKeyword(string word) =>
+        word switch
+        {
+            "var" or "return" or "new" or "public" or "private" or "protected" or "internal"
+            or "static" or "readonly" or "class" or "struct" or "void" or "if" or "while"
+            or "for" or "foreach" or "switch" or "case" or "throw" or "async" or "await"
+            or "get" or "set" or "override" or "virtual" or "sealed" or "abstract" or "const" => true,
+            _ => false
+        };
+
     private static List<Symbol> GetMembersOfType(DocumentSemanticModel model, string typeName)
     {
         var members = new List<Symbol>();
 
-        // ファイル内のスナップショットから検索
+        // 1. ファイル内のスナップショットから検索
         var snapshot = model.Snapshot;
         for (int i = 0; i < snapshot.Nodes.Length; i++)
         {
             var node = snapshot.Nodes[i];
             if (node.Kind is (int)CsffNodeKind.ClassDeclaration
-                or (int)CsffNodeKind.StructDeclaration)
+                or (int)CsffNodeKind.StructDeclaration
+                or (int)CsffNodeKind.InterfaceDeclaration)
             {
                 string clsName = CsffSyntaxAdapter.FindIdentifier(snapshot, node, out _, out _);
                 if (clsName == typeName)
                 {
-                    // このクラスの子ノード（メンバー）を抽出
                     for (int j = 0; j < snapshot.Nodes.Length; j++)
                     {
                         if (snapshot.Nodes[j].Parent == i)
@@ -195,13 +275,21 @@ public static class ScopedResolver
                             {
                                 var (start, len) = snapshot.SourceSpan(j);
                                 var (line, col) = snapshot.Lines.GetPosition(mStart >= 0 ? mStart : start);
+                                SymbolKind kind = (CsffNodeKind)snapshot.Nodes[j].Kind switch
+                                {
+                                    CsffNodeKind.MethodDeclaration => SymbolKind.Method,
+                                    CsffNodeKind.PropertyDeclaration => SymbolKind.Property,
+                                    CsffNodeKind.FieldDeclaration => SymbolKind.Field,
+                                    _ => SymbolKind.Method
+                                };
                                 members.Add(new Symbol(
                                     Id: 0,
                                     NameId: 0,
                                     Name: mName,
-                                    Kind: SymbolKind.Method,
+                                    Kind: kind,
                                     Uri: "",
                                     Range: new Protocol.Range(new Position(line, col), new Position(line, col + mLen)),
+                                    Signature: $"{kind} {mName}",
                                     ContainingType: typeName
                                 ));
                             }
@@ -211,10 +299,10 @@ public static class ScopedResolver
             }
         }
 
-        // SymbolIndex からも補完
-        foreach (var sym in model.Index.FindSymbolsByName(typeName))
+        // 2. SymbolIndex（他ファイル・ワークスペース全体）からも補完
+        foreach (var sym in model.Index.FindMembersByContainingType(typeName))
         {
-            // ContainingType が一致するシンボルがあれば追加
+            members.Add(sym);
         }
 
         return members;

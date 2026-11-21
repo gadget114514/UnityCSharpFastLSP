@@ -29,7 +29,7 @@ public static class CompletionProvider
                 if (idEnd > idStart)
                 {
                     string target = source.Substring(idStart, idEnd - idStart);
-                    var memberItems = ScopedResolver.ResolveMemberCompletions(model, target);
+                    var memberItems = ScopedResolver.ResolveMemberCompletions(model, target, position);
                     if (memberItems.Count > 0)
                     {
                         // 型メンバーに絞り込んで返却！(grep とは決定的に違う！)
