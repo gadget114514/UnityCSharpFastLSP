@@ -6,13 +6,13 @@
 - UnityCSharpFastLSP（新版）
 - UnityCSharpFastLSP の proxy モード（`--proxy`、重い要求は旧版へ転送）
 
-## 前提
+## 前提（すべて相対パスで動作可能）
 
 - Windows、Python 3（`python` で実行できること）
-- Unity プロジェクトのチェックアウト（この例では `C:\ws\Survivors`）
+- リポジトリ同梱のテストフィクスチャ: `./test-fixtures/Survivors`（相対パス）
 - テスト対象ファイル: `Assets/App/Scripts/UI/CapabilityUI.cs`
-- 新版は .NET のランタイムが必要。実行時にエラーが出たら、そのランタイムを入れる。
-- ファイルの版が違うと行番号がずれる。次の行が一致することを確認する。
+- 参照先ファイル: `Assets/App/Scripts/UI/CurrentCapabilitiesUIController.cs`
+- 次の行が一致することを確認する:
   - 0 始まりの 21 行目: `capabilityUI.ShowCapabilitiesUI();`
 
 ## ケース
@@ -26,10 +26,6 @@
 
 両方のケースが一致すれば PASS。スクリプトは全件 PASS のときだけ終了コード 0 を返す。
 
-## 実行時間の目安
-
-旧版は初回起動に数十秒かかることがある（今回の計測では 2 秒）。スクリプトの待ち時間は 400 秒に設定している。
-
 ## 検証結果（v0.2.1 時点）
 
 | サーバー | ケース 1 (`capabilityUI`) | ケース 2 (`ShowCapabilitiesUI`) | 判定 |
@@ -40,73 +36,100 @@
 
 ※ 本シナリオは `DocLspTestScenarioTests.cs` (C# xUnit テスト) および `lsp_def_test.py` (Python 自動E2Eテスト) にてCI/ローカルで恒常的にテストされ、全件合格しています。
 
-## スクリプト
+---
 
-`lsp_def_test.py` として保存する。
+## テスト対象コードの内容
 
-```python
-import subprocess, json, threading, queue, sys
-server, root = sys.argv[1], sys.argv[2]
-extra = sys.argv[3:]  # 例: --proxy --upstream <旧版のexe>
-rel = "Assets/App/Scripts/UI/CapabilityUI.cs"
-path = root.rstrip("\\/") + "/" + rel
-uri = "file:///" + path.replace("\\", "/").lstrip("/")
-# (名前, 行, 文字, 期待ファイル名, 期待行, 期待文字)
-cases = [
-    ("capabilityUI (same file)", 21, 3, "CapabilityUI.cs", 12, 51),
-    ("ShowCapabilitiesUI (other file)", 21, 18, "CurrentCapabilitiesUIController.cs", 25, 20),
-]
-p = subprocess.Popen([server, "--stdio", *extra], stdin=subprocess.PIPE,
-                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-q = queue.Queue()
-def reader():
-    while True:
-        line = p.stdout.readline()
-        if not line:
-            return
-        if line.lower().startswith(b"content-length:"):
-            n = int(line.split(b":")[1]); p.stdout.readline()
-            q.put(json.loads(p.stdout.read(n)))
-threading.Thread(target=reader, daemon=True).start()
-def send(o):
-    b = json.dumps(o).encode()
-    p.stdin.write(b"Content-Length: %d\r\n\r\n" % len(b) + b); p.stdin.flush()
-def recv(i, t=400):
-    while True:
-        m = q.get(timeout=t)
-        if m.get("id") == i:
-            return m
-send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
-      "params": {"processId": None, "rootUri": "file:///" + root.replace("\\", "/"), "capabilities": {}}})
-recv(1)
-send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
-text = open(path, encoding="utf-8-sig").read()
-send({"jsonrpc": "2.0", "method": "textDocument/didOpen",
-      "params": {"textDocument": {"uri": uri, "languageId": "csharp", "version": 1, "text": text}}})
-ok = True
-for i, (name, line, ch, exp_file, el, sc) in enumerate(cases, start=2):
-    send({"jsonrpc": "2.0", "id": i, "method": "textDocument/definition",
-          "params": {"textDocument": {"uri": uri}, "position": {"line": line, "character": ch}}})
-    res = recv(i, 120).get("result") or []
-    got = res[0] if res else None
-    passed = bool(got) and exp_file in got["uri"] \
-        and got["range"]["start"]["line"] == el and got["range"]["start"]["character"] == sc
-    ok = ok and passed
-    print("PASS" if passed else "FAIL", name, json.dumps(got))
-p.kill()
-sys.exit(0 if ok else 1)
+### 1. `Assets/App/Scripts/UI/CapabilityUI.cs`
+
+```csharp
+using UnityEngine;
+using System;
+
+namespace App.UI
+{
+    public class CapabilityUI : MonoBehaviour
+    {
+        public int ViewIndex;
+        public string ViewName;
+        private bool _isDirty;
+        private float _padding;
+
+        private CurrentCapabilitiesUIController    capabilityUI;
+
+        public void Setup()
+        {
+        }
+
+        public void Render()
+        {
+            int dummy = 0;
+capabilityUI.ShowCapabilitiesUI();
+        }
+    }
+}
 ```
 
-## 実行例（PowerShell）
+- **12 行目（0 始まり）**: 51 文字目から `capabilityUI;`（フィールド宣言）
+- **21 行目（0 始まり）**: `capabilityUI.ShowCapabilitiesUI();`
+  - 文字 3: `capabilityUI`
+  - 文字 18: `ShowCapabilitiesUI`
 
-```powershell
-python lsp_def_test.py "C:\Users\gadge\AppData\Local\Programs\UnityCSharpLSP\UnityCSharpLSP.Server.exe" "C:\ws\Survivors"
+### 2. `Assets/App/Scripts/UI/CurrentCapabilitiesUIController.cs`
+
+```csharp
+using UnityEngine;
+using System;
+
+namespace App.UI
+{
+    public class CurrentCapabilitiesUIController : MonoBehaviour
+    {
+        public int ControllerId = 1;
+        public bool IsActive = true;
+
+        public void Initialize()
+        {
+        }
+
+        public void ResetUI()
+        {
+        }
+
+        public void UpdateUI()
+        {
+        }
+
+        public void Close()
+        {
+        }
+        public void ShowCapabilitiesUI()
+        {
+            Debug.Log("Capabilities UI shown");
+        }
+    }
+}
 ```
 
+- **25 行目（0 始まり）**: 20 文字目から `ShowCapabilitiesUI()`（メソッド宣言）
+
+---
+
+## 実行方法（PowerShell / コマンドプロンプト）
+
+相対パスに対応しており、引数なしまたは相対パス指定でそのまま実行できます。
+
+### (A) 引数なし（デフォルトでリポジトリ内相対パスを使用）
 ```powershell
-python lsp_def_test.py "C:\Users\gadge\AppData\Local\Programs\UnityCSharpFastLSP\UnityCSharpFastLSP.Server.exe" "C:\ws\Survivors"
+python lsp_def_test.py
 ```
 
+### (B) 実行ファイルとプロジェクトを相対パスで明示指定
 ```powershell
-python lsp_def_test.py "C:\Users\gadge\AppData\Local\Programs\UnityCSharpFastLSP\UnityCSharpFastLSP.Server.exe" "C:\ws\Survivors" --proxy --upstream "C:\Users\gadge\AppData\Local\Programs\UnityCSharpLSP\UnityCSharpLSP.Server.exe"
+python lsp_def_test.py ./artifacts/publish/UnityCSharpFastLSP.Server.exe ./test-fixtures/Survivors
+```
+
+### (C) proxy モードで実行
+```powershell
+python lsp_def_test.py ./artifacts/publish/UnityCSharpFastLSP.Server.exe ./test-fixtures/Survivors --proxy
 ```
