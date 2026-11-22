@@ -1,0 +1,42 @@
+{
+  "taskqueue": "fastlsp-release",
+  "concurrency": 1,
+  "jobs": [
+    {
+      "id": "rel-build",
+      "command": "C:/Users/bluen/dotnet11/dotnet.exe build UnityCSharpFastLSP.sln -c Release",
+      "cwd": "D:/wsgit/UnityCSharpFastLSP",
+      "env": { "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11" },
+      "summary": "Release build of the solution",
+      "timeoutSec": 900
+    },
+    {
+      "id": "rel-test",
+      "command": "C:/Users/bluen/dotnet11/dotnet.exe test tests/UnityCSharpFastLSP.Tests/UnityCSharpFastLSP.Tests.csproj -c Release --no-build",
+      "cwd": "D:/wsgit/UnityCSharpFastLSP",
+      "env": { "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11" },
+      "summary": "Run full test suite before release",
+      "timeoutSec": 1200,
+      "dependsOn": ["rel-build"]
+    },
+    {
+      "id": "rel-publish",
+      "command": "C:/Users/bluen/dotnet11/dotnet.exe publish src/UnityCSharpFastLSP.Server/UnityCSharpFastLSP.Server.csproj -c Release -r win-x64 --self-contained true -o artifacts/publish",
+      "cwd": "D:/wsgit/UnityCSharpFastLSP",
+      "env": { "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11" },
+      "summary": "Self-contained win-x64 publish to artifacts/publish",
+      "timeoutSec": 1200,
+      "dependsOn": ["rel-test"],
+      "success": { "exitCode": 0, "filesNewer": ["artifacts/publish/UnityCSharpFastLSP.Server.dll"] }
+    },
+    {
+      "id": "rel-installer",
+      "command": "\"C:/Users/bluen/AppData/Local/Programs/Inno Setup 6/ISCC.exe\" installer.iss",
+      "cwd": "D:/wsgit/UnityCSharpFastLSP",
+      "summary": "Build UnityCSharpFastLSP-v0.3.0-Setup.exe installer",
+      "timeoutSec": 900,
+      "dependsOn": ["rel-publish"],
+      "success": { "exitCode": 0, "filesNewer": ["artifacts/UnityCSharpFastLSP-v0.3.0-Setup.exe"] }
+    }
+  ]
+}

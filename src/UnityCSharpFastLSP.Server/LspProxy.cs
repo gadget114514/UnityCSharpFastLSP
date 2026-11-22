@@ -32,6 +32,24 @@ public sealed class LspProxy : IDisposable
         "workspace/symbol"
     };
 
+    /// <summary>FastLSP が直接応答するメソッドか（false なら Upstream へ委譲される）。</summary>
+    public static bool IsFastPath(string method) => FastMethods.Contains(method);
+
+    /// <summary>Upstream の起動に失敗した、または起動後に終了した場合のエラー内容。利用可能なら null。</summary>
+    public string? UpstreamError
+    {
+        get
+        {
+            if (_upstreamStartError != null) return _upstreamStartError;
+            var proc = _upstreamProcess;
+            return _upstreamReady && proc != null && proc.HasExited
+                ? $"Upstream UnityCSharpLSP exited (code {proc.ExitCode})."
+                : null;
+        }
+    }
+
+    private volatile string? _upstreamStartError;
+
     public LspProxy(Stream clientOutput, string? upstreamExecutablePath = null)
     {
         _clientOutput = clientOutput;
@@ -61,6 +79,7 @@ public sealed class LspProxy : IDisposable
         }
         catch (Exception ex)
         {
+            _upstreamStartError = ex.Message;
             Console.Error.WriteLine($"[LspProxy] Failed to initialize upstream server in background: {ex.Message}");
         }
     }
@@ -133,10 +152,12 @@ public sealed class LspProxy : IDisposable
 
         try
         {
-            byte[] header = System.Text.Encoding.ASCII.GetBytes($"Content-Length: {message.Length}\r\n\r\n");
-            _upstreamInput.BaseStream.Write(header, 0, header.Length);
-            _upstreamInput.BaseStream.Write(message, 0, message.Length);
-            _upstreamInput.BaseStream.Flush();
+            byte[] frame = LspMessageWriter.Frame(message);
+            lock (_upstreamInput)
+            {
+                _upstreamInput.BaseStream.Write(frame, 0, frame.Length);
+                _upstreamInput.BaseStream.Flush();
+            }
         }
         catch (Exception ex)
         {
@@ -160,18 +181,17 @@ public sealed class LspProxy : IDisposable
                 var root = doc.RootElement;
 
                 // initialize のレスポンスは FastLSP がすでに返答しているためスキップ
-                if (root.TryGetProperty("result", out var resElem) &&
+                if (root.TryGetProperty("result", out var resElem) && resElem.ValueKind == JsonValueKind.Object &&
                     resElem.TryGetProperty("capabilities", out _))
                 {
                     continue;
                 }
 
                 // Upstream の診断やレスポンス (rename, codeAction 等) をクライアントに透過転送
-                byte[] header = System.Text.Encoding.ASCII.GetBytes($"Content-Length: {message.Length}\r\n\r\n");
+                byte[] frame = LspMessageWriter.Frame(message);
                 lock (_clientOutput)
                 {
-                    _clientOutput.Write(header, 0, header.Length);
-                    _clientOutput.Write(message, 0, message.Length);
+                    _clientOutput.Write(frame, 0, frame.Length);
                     _clientOutput.Flush();
                 }
             }

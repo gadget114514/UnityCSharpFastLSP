@@ -1,4 +1,9 @@
+using System.Globalization;
+using System.Text.Encodings.Web;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using UnityCSharpFastLSP.Protocol;
+using UnityCSharpFastLSP.Server.Mcp;
 
 namespace UnityCSharpFastLSP.Server;
 
@@ -13,6 +18,10 @@ USAGE:
 
 MODES:
   (default)        Run as LSP server over stdio (JSON-RPC 2.0). Normal mode for editors and AI agents.
+  --mcp            Run as MCP (Model Context Protocol) server over stdio (newline-delimited JSON-RPC).
+                   Tools map 1:1 to LSP methods (textDocument/definition -> textDocument_definition).
+                   Standalone answers only the fast methods (others return error -32601);
+                   add --proxy to fall back to UnityCSharpLSP for the rest.
 
 OPTIONS:
   --stdio              Use standard input/output for LSP JSON-RPC communication (default: true).
@@ -23,8 +32,14 @@ OPTIONS:
                          3) PATH environment variable, 4) Standard directories. (5: Fails with error).
   --upstream <path>    Explicit path to upstream Roslyn LSP server (e.g. UnityCSharpLSP.Server.exe).
                        If omitted with --proxy, automatically searches following priority 2 -> 3 -> 4.
+  --workspace <path>   MCP mode: workspace root. Default: nearest ancestor of the current directory
+                       that contains Assets/ or ProjectSettings/ (or the current directory).
+  --settings <json>    MCP mode: settings sent with workspace/didChangeConfiguration at startup
+                       (effective with --proxy only). Use @<file> to read the JSON from a file.
+  --timeout <sec>      MCP mode: timeout for each LSP request in seconds (default: 120).
   --selftest, --test   Run end-to-end verification self-test (cross-file definition jumps) and exit.
   --print-config       Print LLM agent LSP configuration snippet (opencode.json format) to stdout and exit.
+                       With --mcp, print the MCP configuration snippet (mcpServers format) instead.
   -h, --help           Show this help and exit.
 
 INTELLIGENT HYBRID PROXY PRIORITY:
@@ -53,8 +68,41 @@ LLM / AI AGENT INTEGRATION (OpenCode, Claude Code, Antigravity, Cursor):
     }
   Alternatively, run `UnityCSharpFastLSP.Server --print-config` to auto-generate this snippet with your resolved binary path.
 
+MCP CLIENT INTEGRATION (Claude Code, OpenCode, etc.):
+  Run `UnityCSharpFastLSP.Server --print-config --mcp [--proxy] [--workspace <path>]` to generate this snippet:
+    {
+      ""mcpServers"": {
+        ""unity-csharp-fast-lsp"": {
+          ""command"": ""<path/to/UnityCSharpFastLSP.Server.exe>"",
+          ""args"": [""--mcp"", ""--workspace"", ""<path>""]
+        }
+      }
+    }
+
+LLM / AI AGENT GUIDE (MCP):
+  Choosing the mode:
+    - Read-only navigation (definition, references, symbols, hover, completion):
+      use --mcp (standalone, fast, no upstream needed).
+    - rename, codeAction, type/call hierarchy, compiler diagnostics, unitycsharp.*
+      commands (asset / GUID search): use --mcp --proxy. This needs UnityCSharpLSP.
+      Upstream lookup order: --upstream, UNITY_CSHARP_LSP_PATH, PATH, standard dirs.
+  Calling tools:
+    - Tool name = LSP method with '/' replaced by '_' (textDocument_definition).
+    - Arguments are the LSP params object. Positions are 0-based (line, UTF-16 character).
+    - textDocument.uri can be a file:/// URI, an absolute path, or a workspace-relative path.
+    - Files are synced from disk automatically; no didOpen is needed.
+    - Edit tools (rename, codeAction, formatting, ...) return a WorkspaceEdit only.
+      They do not apply it. Apply it with your own file edit tool.
+    - After a batch of edits, call lsp_reset to reload the workspace.
+  Reading errors:
+    - isError with {""code"":-32601} and a message containing --proxy: the tool is not
+      supported standalone. Restart the server with --mcp --proxy.
+    - Upstream start failure message: set --upstream or UNITY_CSHARP_LSP_PATH.
+    - An unknown tool name is a JSON-RPC error -32602 (not isError). Check the name.
+  Full reference: doc/mcp.md (tool table, routing, known limitations).
+
 NOTES:
-  - stdout is strictly reserved for LSP JSON-RPC; all logs and diagnostics output to stderr.
+  - stdout is strictly reserved for LSP JSON-RPC (and MCP JSON-RPC in --mcp mode); all logs and diagnostics output to stderr.
   - Supports incremental parsing, live syntax diagnostics, hierarchical symbols, definition/references, and Unity messages/attributes completion.";
 
     private static int Main(string[] args)
@@ -74,6 +122,11 @@ NOTES:
 
             if (args.Contains("--print-config"))
             {
+                if (args.Contains("--mcp"))
+                {
+                    return PrintMcpConfig(args);
+                }
+
                 string exePath = (Environment.ProcessPath ?? "UnityCSharpFastLSP.Server.exe").Replace('\\', '/');
                 Console.WriteLine(
 $$"""
@@ -87,6 +140,11 @@ $$"""
 }
 """);
                 return 0;
+            }
+
+            if (args.Contains("--mcp"))
+            {
+                return RunMcpMode(args);
             }
         }
 
@@ -135,5 +193,134 @@ $$"""
         }
 
         return 0;
+    }
+
+    // ---------- MCP モード ----------
+
+    /// <summary>
+    /// --mcp: stdio の MCP サーバーとして起動する。--proxy / --upstream 併用で UnityCSharpLSP にフォールバック。
+    /// stdout は MCP 専用。ログは stderr。
+    /// </summary>
+    private static int RunMcpMode(string[] args)
+    {
+        if (!TryGetOptionValue(args, "--workspace", out string? workspaceArg) ||
+            !TryGetOptionValue(args, "--settings", out string? settingsArg) ||
+            !TryGetOptionValue(args, "--timeout", out string? timeoutArg) ||
+            !TryGetOptionValue(args, "--upstream", out string? upstreamArg))
+        {
+            return 1;
+        }
+
+        string root = workspaceArg != null
+            ? Path.GetFullPath(workspaceArg)
+            : McpServer.FindWorkspaceRoot(Environment.CurrentDirectory);
+
+        JsonNode? settings = null;
+        if (settingsArg != null)
+        {
+            try
+            {
+                string json = settingsArg.StartsWith('@') ? File.ReadAllText(settingsArg[1..]) : settingsArg;
+                settings = JsonNode.Parse(json);
+            }
+            catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+            {
+                Console.Error.WriteLine($"UnityCSharpFastLSP.Server: invalid --settings: {ex.Message}");
+                return 1;
+            }
+        }
+
+        TimeSpan timeout = TimeSpan.FromSeconds(120);
+        if (timeoutArg != null)
+        {
+            if (!int.TryParse(timeoutArg, NumberStyles.Integer, CultureInfo.InvariantCulture, out int seconds) || seconds <= 0)
+            {
+                Console.Error.WriteLine($"UnityCSharpFastLSP.Server: invalid --timeout '{timeoutArg}' (positive integer seconds expected).");
+                return 1;
+            }
+            timeout = TimeSpan.FromSeconds(seconds);
+        }
+
+        bool proxy = args.Contains("--proxy") || args.Any(a => a.StartsWith("--upstream"));
+        Console.Error.WriteLine($"UnityCSharpFastLSP.Server: MCP mode ({(proxy ? "proxy" : "standalone")}), workspace={root}");
+
+        try
+        {
+            var options = new McpServerOptions(root, proxy, upstreamArg, settings, timeout);
+            using var server = new McpServer(options, Console.OpenStandardInput(), Console.OpenStandardOutput());
+            return server.RunAsync().GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[FATAL ERROR] MCP initialization failed: {ex.Message}");
+            return 1;
+        }
+    }
+
+    /// <summary>--print-config --mcp: MCP クライアント用の mcpServers 設定を出力する。</summary>
+    private static int PrintMcpConfig(string[] args)
+    {
+        if (!TryGetOptionValue(args, "--workspace", out string? workspaceArg) ||
+            !TryGetOptionValue(args, "--upstream", out string? upstreamArg))
+        {
+            return 1;
+        }
+
+        string exePath = (Environment.ProcessPath ?? "UnityCSharpFastLSP.Server.exe").Replace('\\', '/');
+
+        var mcpArgs = new JsonArray("--mcp");
+        if (args.Contains("--proxy") || upstreamArg != null)
+        {
+            mcpArgs.Add("--proxy");
+        }
+        if (upstreamArg != null)
+        {
+            mcpArgs.Add("--upstream");
+            mcpArgs.Add(upstreamArg.Replace('\\', '/'));
+        }
+        if (workspaceArg != null)
+        {
+            mcpArgs.Add("--workspace");
+            mcpArgs.Add(workspaceArg.Replace('\\', '/'));
+        }
+
+        var config = new JsonObject
+        {
+            ["mcpServers"] = new JsonObject
+            {
+                ["unity-csharp-fast-lsp"] = new JsonObject
+                {
+                    ["command"] = exePath,
+                    ["args"] = mcpArgs,
+                },
+            },
+        };
+
+        Console.WriteLine(config.ToJsonString(new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        }));
+        return 0;
+    }
+
+    /// <summary>
+    /// "--name value" 形式のオプション値を取得する。未指定なら true（value = null）。
+    /// 指定されたが値が無い、または値が別のオプションの場合は stderr にエラーを出して false。
+    /// </summary>
+    private static bool TryGetOptionValue(string[] args, string name, out string? value)
+    {
+        value = null;
+        int index = Array.IndexOf(args, name);
+        if (index < 0) return true;
+
+        if (index + 1 >= args.Length || args[index + 1].StartsWith("--", StringComparison.Ordinal))
+        {
+            Console.Error.WriteLine($"UnityCSharpFastLSP.Server: {name} requires a value.");
+            return false;
+        }
+
+        value = args[index + 1];
+        return true;
     }
 }

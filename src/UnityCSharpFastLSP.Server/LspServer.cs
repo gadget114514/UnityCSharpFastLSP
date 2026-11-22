@@ -234,7 +234,7 @@ public sealed class LspServer
                 RenameProvider: _isProxy ? true : null,
                 CodeActionProvider: _isProxy ? true : null
             ),
-            ServerInfo: new ServerInfo("UnityCSharpFastLSP", "0.2.1")
+            ServerInfo: new ServerInfo("UnityCSharpFastLSP", "0.3.0")
         );
 
         _writer.WriteResponse(id, result, LspJsonSerializerContext.Default.InitializeResult);

@@ -15,6 +15,14 @@
 | **Phase 2** | `Semantics/`, `Workspace/` | `SymbolIndex` (文字列相互化テーブル, ファイル単位の原子的差分索引更新), `Assets/`/`Packages/` 並列インデクサー, `definition`/`references` | **完了** |
 | **Phase 3** | `Semantics/` | `DocumentSemanticModel`, `Hover` (Unity ライフサイクルドキュメント), `Completion` (Unity メッセージ・属性補完), `UnityRules` | **完了** |
 | **Phase 4** | `Tests/`, `Phase0.Bench/` | 全 11 件の統合テスト, ウォーム状態の 10 倍高速化ゲートベンチマーク（120〜7000倍達成） | **完了** |
+| **MCP-00** | `tasks/cards/CARD-MCP-00-Overview.md` | MCP モードの全体方針・互換契約（全カード共通） | 方針確定 |
+| **MCP-01** | `tasks/cards/CARD-MCP-01-ToolTable.md` | MCP ツール表（38 ツール、`Mcp/McpToolTable.cs`） | 実装済 |
+| **MCP-02** | `tasks/cards/CARD-MCP-02-Bridge.md` | MCP サーバー / LSP ブリッジ（`Mcp/McpServer.cs`, `LspLoopbackClient.cs`, `DocumentSyncTracker.cs`） | 実装済 |
+| **MCP-03** | `tasks/cards/CARD-MCP-03-ProgramWiring.md` | `Program.cs` への `--mcp` / `--proxy` / `--workspace` 等の配線 | 実装済 |
+| **MCP-04** | `tasks/cards/CARD-MCP-04-Tests.md` | MCP テスト（`tests/UnityCSharpFastLSP.Tests/Mcp/`） | 実装済 |
+| **MCP-05** | `tasks/cards/CARD-MCP-05-Docs.md` | MCP ドキュメント（`doc/mcp.md`, README, SKILL.md, `--help`） | 実装中 |
+
+MCP モードの利用者向け説明は [doc/mcp.md](../doc/mcp.md) を参照してください。
 
 ---
 

@@ -1,0 +1,1261 @@
+{
+  "id": "fastlsp-mcp",
+  "cwd": "D:/wsgit/UnityCSharpFastLSP",
+  "intent": "Implement UnityCSharpFastLSP --mcp mode compatible with UnityCSharpLSP MCP, with --proxy fallback",
+  "summary": "MCP mode cards CARD-MCP-01..05 with build/test gates",
+  "defaults": {
+    "worker": {
+      "idle": {
+        "firstEventSec": 180,
+        "outputSec": 600
+      },
+      "probe": true
+    }
+  },
+  "root": {
+    "type": "sequence",
+    "children": [
+      {
+        "type": "catch",
+        "id": "card_mcp01_guard",
+        "maxRetries": 2,
+        "otherwise": "fail",
+        "child": {
+          "type": "worker",
+          "id": "card_mcp01",
+          "engines": [
+            {
+              "engine": "claude",
+              "model": "haiku"
+            },
+            {
+              "engine": "opencode",
+              "model": "opencode/hy4-flash-free"
+            }
+          ],
+          "switchEngineOn": [
+            "startup_hang",
+            "auth_error",
+            "probe_failed"
+          ],
+          "prompt": "Stay inside the project (cwd): do not read or write files outside it. If the task requires one, add it to needs and request a permit instead. You are implementing one task card of the UnityCSharpFastLSP MCP mode. First read tasks/cards/CARD-MCP-00-Overview.md (common rules and the compatibility contract) and doc/mcp-csharp-lsp.md (the spec), then implement tasks/cards/CARD-MCP-01-ToolTable.md completely. Read the existing code you touch (src/UnityCSharpFastLSP.Server/Mcp/LspLoopbackClient.cs, LspServer.cs, LspProxy.cs, Program.cs) before editing. Build with: C:/Users/bluen/dotnet11/dotnet.exe build UnityCSharpFastLSP.sln -c Release (env DOTNET_ROOT=C:\\Users\\bluen\\dotnet11) and fix every warning/error until it builds clean. Do not git commit. Do not add NuGet packages. When done, write a JSON object {\"card\": \"CARD-MCP-01-ToolTable.md\", \"filesChanged\": [...], \"notes\": \"...\"} to the file named by env PC_BT_RESULT_FILE.",
+          "summary": "Implement MCP tool table (McpToolTable.cs)",
+          "timeoutSec": 5400
+        },
+        "handlers": [
+          {
+            "class": [
+              "startup_hang",
+              "idle_stall"
+            ],
+            "do": {
+              "type": "set",
+              "var": "hang",
+              "value": "engine-switch-handled"
+            }
+          },
+          {
+            "class": "rate_limited",
+            "do": {
+              "type": "wait",
+              "sec": 600
+            },
+            "thenRetry": true
+          },
+          {
+            "class": "permission_denied",
+            "do": {
+              "type": "set",
+              "var": "permit",
+              "value": "requested"
+            },
+            "thenRetry": false
+          },
+          {
+            "class": "*",
+            "do": {
+              "type": "escalate",
+              "question": "Card CARD-MCP-01-ToolTable.md failed on every approved engine. Continue, stop, or take over?",
+              "guidance": "The worker failed after all approved engine candidates were tried.",
+              "expect": [
+                "continue",
+                "stop",
+                "takeover"
+              ],
+              "include": {
+                "logs": [
+                  "card_mcp01"
+                ],
+                "logLines": 100
+              }
+            }
+          }
+        ]
+      },
+      {
+        "type": "fallback",
+        "children": [
+          {
+            "type": "job",
+            "id": "build_mcp01",
+            "command": "C:/Users/bluen/dotnet11/dotnet.exe build UnityCSharpFastLSP.sln -c Release",
+            "summary": "build after mcp01",
+            "timeoutSec": 900,
+            "env": {
+              "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11"
+            }
+          },
+          {
+            "type": "sequence",
+            "children": [
+              {
+                "type": "catch",
+                "id": "fix_build_mcp01_guard",
+                "maxRetries": 2,
+                "otherwise": "fail",
+                "child": {
+                  "type": "worker",
+                  "id": "fix_build_mcp01",
+                  "engines": [
+                    {
+                      "engine": "claude",
+                      "model": "haiku"
+                    },
+                    {
+                      "engine": "opencode",
+                      "model": "opencode/hy4-flash-free"
+                    }
+                  ],
+                  "switchEngineOn": [
+                    "startup_hang",
+                    "auth_error",
+                    "probe_failed"
+                  ],
+                  "prompt": "Stay inside the project (cwd): do not read or write files outside it. The command `C:/Users/bluen/dotnet11/dotnet.exe build UnityCSharpFastLSP.sln -c Release` failed after task card tasks/cards/CARD-MCP-01-ToolTable.md was implemented. Read the log ${build_mcp01.logFile} and fix the code so it passes. Follow tasks/cards/CARD-MCP-00-Overview.md. Do not weaken or delete tests to make them pass; fix the implementation. Do not git commit. Write {\"fixed\": true, \"notes\": \"...\"} to the file named by env PC_BT_RESULT_FILE.",
+                  "summary": "Fix build failure after mcp01",
+                  "timeoutSec": 2700
+                },
+                "handlers": [
+                  {
+                    "class": [
+                      "startup_hang",
+                      "idle_stall"
+                    ],
+                    "do": {
+                      "type": "set",
+                      "var": "hang",
+                      "value": "engine-switch-handled"
+                    }
+                  },
+                  {
+                    "class": "rate_limited",
+                    "do": {
+                      "type": "wait",
+                      "sec": 600
+                    },
+                    "thenRetry": true
+                  },
+                  {
+                    "class": "permission_denied",
+                    "do": {
+                      "type": "set",
+                      "var": "permit",
+                      "value": "requested"
+                    },
+                    "thenRetry": false
+                  },
+                  {
+                    "class": "*",
+                    "do": {
+                      "type": "escalate",
+                      "question": "build still fails after mcp01; how should I proceed?",
+                      "guidance": "The worker failed after all approved engine candidates were tried.",
+                      "expect": [
+                        "continue",
+                        "stop",
+                        "takeover"
+                      ],
+                      "include": {
+                        "logs": [
+                          "fix_build_mcp01"
+                        ],
+                        "logLines": 100
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "job",
+                "id": "rebuild_mcp01",
+                "command": "C:/Users/bluen/dotnet11/dotnet.exe build UnityCSharpFastLSP.sln -c Release",
+                "summary": "Re-run build after fixing mcp01",
+                "timeoutSec": 900,
+                "env": {
+                  "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "catch",
+        "id": "card_mcp02_guard",
+        "maxRetries": 2,
+        "otherwise": "fail",
+        "child": {
+          "type": "worker",
+          "id": "card_mcp02",
+          "engines": [
+            {
+              "engine": "claude",
+              "model": "haiku"
+            },
+            {
+              "engine": "opencode",
+              "model": "opencode/hy4-flash-free"
+            }
+          ],
+          "switchEngineOn": [
+            "startup_hang",
+            "auth_error",
+            "probe_failed"
+          ],
+          "prompt": "Stay inside the project (cwd): do not read or write files outside it. If the task requires one, add it to needs and request a permit instead. You are implementing one task card of the UnityCSharpFastLSP MCP mode. First read tasks/cards/CARD-MCP-00-Overview.md (common rules and the compatibility contract) and doc/mcp-csharp-lsp.md (the spec), then implement tasks/cards/CARD-MCP-02-Bridge.md completely. Read the existing code you touch (src/UnityCSharpFastLSP.Server/Mcp/LspLoopbackClient.cs, LspServer.cs, LspProxy.cs, Program.cs) before editing. Build with: C:/Users/bluen/dotnet11/dotnet.exe build UnityCSharpFastLSP.sln -c Release (env DOTNET_ROOT=C:\\Users\\bluen\\dotnet11) and fix every warning/error until it builds clean. Do not git commit. Do not add NuGet packages. When done, write a JSON object {\"card\": \"CARD-MCP-02-Bridge.md\", \"filesChanged\": [...], \"notes\": \"...\"} to the file named by env PC_BT_RESULT_FILE.",
+          "summary": "Implement MCP stdio server and LSP bridge",
+          "timeoutSec": 5400
+        },
+        "handlers": [
+          {
+            "class": [
+              "startup_hang",
+              "idle_stall"
+            ],
+            "do": {
+              "type": "set",
+              "var": "hang",
+              "value": "engine-switch-handled"
+            }
+          },
+          {
+            "class": "rate_limited",
+            "do": {
+              "type": "wait",
+              "sec": 600
+            },
+            "thenRetry": true
+          },
+          {
+            "class": "permission_denied",
+            "do": {
+              "type": "set",
+              "var": "permit",
+              "value": "requested"
+            },
+            "thenRetry": false
+          },
+          {
+            "class": "*",
+            "do": {
+              "type": "escalate",
+              "question": "Card CARD-MCP-02-Bridge.md failed on every approved engine. Continue, stop, or take over?",
+              "guidance": "The worker failed after all approved engine candidates were tried.",
+              "expect": [
+                "continue",
+                "stop",
+                "takeover"
+              ],
+              "include": {
+                "logs": [
+                  "card_mcp02"
+                ],
+                "logLines": 100
+              }
+            }
+          }
+        ]
+      },
+      {
+        "type": "fallback",
+        "children": [
+          {
+            "type": "job",
+            "id": "build_mcp02",
+            "command": "C:/Users/bluen/dotnet11/dotnet.exe build UnityCSharpFastLSP.sln -c Release",
+            "summary": "build after mcp02",
+            "timeoutSec": 900,
+            "env": {
+              "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11"
+            }
+          },
+          {
+            "type": "sequence",
+            "children": [
+              {
+                "type": "catch",
+                "id": "fix_build_mcp02_guard",
+                "maxRetries": 2,
+                "otherwise": "fail",
+                "child": {
+                  "type": "worker",
+                  "id": "fix_build_mcp02",
+                  "engines": [
+                    {
+                      "engine": "claude",
+                      "model": "haiku"
+                    },
+                    {
+                      "engine": "opencode",
+                      "model": "opencode/hy4-flash-free"
+                    }
+                  ],
+                  "switchEngineOn": [
+                    "startup_hang",
+                    "auth_error",
+                    "probe_failed"
+                  ],
+                  "prompt": "Stay inside the project (cwd): do not read or write files outside it. The command `C:/Users/bluen/dotnet11/dotnet.exe build UnityCSharpFastLSP.sln -c Release` failed after task card tasks/cards/CARD-MCP-02-Bridge.md was implemented. Read the log ${build_mcp02.logFile} and fix the code so it passes. Follow tasks/cards/CARD-MCP-00-Overview.md. Do not weaken or delete tests to make them pass; fix the implementation. Do not git commit. Write {\"fixed\": true, \"notes\": \"...\"} to the file named by env PC_BT_RESULT_FILE.",
+                  "summary": "Fix build failure after mcp02",
+                  "timeoutSec": 2700
+                },
+                "handlers": [
+                  {
+                    "class": [
+                      "startup_hang",
+                      "idle_stall"
+                    ],
+                    "do": {
+                      "type": "set",
+                      "var": "hang",
+                      "value": "engine-switch-handled"
+                    }
+                  },
+                  {
+                    "class": "rate_limited",
+                    "do": {
+                      "type": "wait",
+                      "sec": 600
+                    },
+                    "thenRetry": true
+                  },
+                  {
+                    "class": "permission_denied",
+                    "do": {
+                      "type": "set",
+                      "var": "permit",
+                      "value": "requested"
+                    },
+                    "thenRetry": false
+                  },
+                  {
+                    "class": "*",
+                    "do": {
+                      "type": "escalate",
+                      "question": "build still fails after mcp02; how should I proceed?",
+                      "guidance": "The worker failed after all approved engine candidates were tried.",
+                      "expect": [
+                        "continue",
+                        "stop",
+                        "takeover"
+                      ],
+                      "include": {
+                        "logs": [
+                          "fix_build_mcp02"
+                        ],
+                        "logLines": 100
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "job",
+                "id": "rebuild_mcp02",
+                "command": "C:/Users/bluen/dotnet11/dotnet.exe build UnityCSharpFastLSP.sln -c Release",
+                "summary": "Re-run build after fixing mcp02",
+                "timeoutSec": 900,
+                "env": {
+                  "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "fallback",
+        "children": [
+          {
+            "type": "job",
+            "id": "test_mcp02",
+            "command": "C:/Users/bluen/dotnet11/dotnet.exe test tests/UnityCSharpFastLSP.Tests/UnityCSharpFastLSP.Tests.csproj -c Release",
+            "summary": "test after mcp02",
+            "timeoutSec": 1200,
+            "env": {
+              "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11"
+            }
+          },
+          {
+            "type": "sequence",
+            "children": [
+              {
+                "type": "catch",
+                "id": "fix_test_mcp02_guard",
+                "maxRetries": 2,
+                "otherwise": "fail",
+                "child": {
+                  "type": "worker",
+                  "id": "fix_test_mcp02",
+                  "engines": [
+                    {
+                      "engine": "claude",
+                      "model": "haiku"
+                    },
+                    {
+                      "engine": "opencode",
+                      "model": "opencode/hy4-flash-free"
+                    }
+                  ],
+                  "switchEngineOn": [
+                    "startup_hang",
+                    "auth_error",
+                    "probe_failed"
+                  ],
+                  "prompt": "Stay inside the project (cwd): do not read or write files outside it. The command `C:/Users/bluen/dotnet11/dotnet.exe test tests/UnityCSharpFastLSP.Tests/UnityCSharpFastLSP.Tests.csproj -c Release` failed after task card tasks/cards/CARD-MCP-02-Bridge.md was implemented. Read the log ${test_mcp02.logFile} and fix the code so it passes. Follow tasks/cards/CARD-MCP-00-Overview.md. Do not weaken or delete tests to make them pass; fix the implementation. Do not git commit. Write {\"fixed\": true, \"notes\": \"...\"} to the file named by env PC_BT_RESULT_FILE.",
+                  "summary": "Fix test failure after mcp02",
+                  "timeoutSec": 2700
+                },
+                "handlers": [
+                  {
+                    "class": [
+                      "startup_hang",
+                      "idle_stall"
+                    ],
+                    "do": {
+                      "type": "set",
+                      "var": "hang",
+                      "value": "engine-switch-handled"
+                    }
+                  },
+                  {
+                    "class": "rate_limited",
+                    "do": {
+                      "type": "wait",
+                      "sec": 600
+                    },
+                    "thenRetry": true
+                  },
+                  {
+                    "class": "permission_denied",
+                    "do": {
+                      "type": "set",
+                      "var": "permit",
+                      "value": "requested"
+                    },
+                    "thenRetry": false
+                  },
+                  {
+                    "class": "*",
+                    "do": {
+                      "type": "escalate",
+                      "question": "test still fails after mcp02; how should I proceed?",
+                      "guidance": "The worker failed after all approved engine candidates were tried.",
+                      "expect": [
+                        "continue",
+                        "stop",
+                        "takeover"
+                      ],
+                      "include": {
+                        "logs": [
+                          "fix_test_mcp02"
+                        ],
+                        "logLines": 100
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "job",
+                "id": "retest_mcp02",
+                "command": "C:/Users/bluen/dotnet11/dotnet.exe test tests/UnityCSharpFastLSP.Tests/UnityCSharpFastLSP.Tests.csproj -c Release",
+                "summary": "Re-run test after fixing mcp02",
+                "timeoutSec": 1200,
+                "env": {
+                  "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "catch",
+        "id": "card_mcp03_guard",
+        "maxRetries": 2,
+        "otherwise": "fail",
+        "child": {
+          "type": "worker",
+          "id": "card_mcp03",
+          "engines": [
+            {
+              "engine": "claude",
+              "model": "haiku"
+            },
+            {
+              "engine": "opencode",
+              "model": "opencode/hy4-flash-free"
+            }
+          ],
+          "switchEngineOn": [
+            "startup_hang",
+            "auth_error",
+            "probe_failed"
+          ],
+          "prompt": "Stay inside the project (cwd): do not read or write files outside it. If the task requires one, add it to needs and request a permit instead. You are implementing one task card of the UnityCSharpFastLSP MCP mode. First read tasks/cards/CARD-MCP-00-Overview.md (common rules and the compatibility contract) and doc/mcp-csharp-lsp.md (the spec), then implement tasks/cards/CARD-MCP-03-ProgramWiring.md completely. Read the existing code you touch (src/UnityCSharpFastLSP.Server/Mcp/LspLoopbackClient.cs, LspServer.cs, LspProxy.cs, Program.cs) before editing. Build with: C:/Users/bluen/dotnet11/dotnet.exe build UnityCSharpFastLSP.sln -c Release (env DOTNET_ROOT=C:\\Users\\bluen\\dotnet11) and fix every warning/error until it builds clean. Do not git commit. Do not add NuGet packages. When done, write a JSON object {\"card\": \"CARD-MCP-03-ProgramWiring.md\", \"filesChanged\": [...], \"notes\": \"...\"} to the file named by env PC_BT_RESULT_FILE.",
+          "summary": "Wire --mcp mode into Program.cs",
+          "timeoutSec": 5400
+        },
+        "handlers": [
+          {
+            "class": [
+              "startup_hang",
+              "idle_stall"
+            ],
+            "do": {
+              "type": "set",
+              "var": "hang",
+              "value": "engine-switch-handled"
+            }
+          },
+          {
+            "class": "rate_limited",
+            "do": {
+              "type": "wait",
+              "sec": 600
+            },
+            "thenRetry": true
+          },
+          {
+            "class": "permission_denied",
+            "do": {
+              "type": "set",
+              "var": "permit",
+              "value": "requested"
+            },
+            "thenRetry": false
+          },
+          {
+            "class": "*",
+            "do": {
+              "type": "escalate",
+              "question": "Card CARD-MCP-03-ProgramWiring.md failed on every approved engine. Continue, stop, or take over?",
+              "guidance": "The worker failed after all approved engine candidates were tried.",
+              "expect": [
+                "continue",
+                "stop",
+                "takeover"
+              ],
+              "include": {
+                "logs": [
+                  "card_mcp03"
+                ],
+                "logLines": 100
+              }
+            }
+          }
+        ]
+      },
+      {
+        "type": "fallback",
+        "children": [
+          {
+            "type": "job",
+            "id": "build_mcp03",
+            "command": "C:/Users/bluen/dotnet11/dotnet.exe build UnityCSharpFastLSP.sln -c Release",
+            "summary": "build after mcp03",
+            "timeoutSec": 900,
+            "env": {
+              "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11"
+            }
+          },
+          {
+            "type": "sequence",
+            "children": [
+              {
+                "type": "catch",
+                "id": "fix_build_mcp03_guard",
+                "maxRetries": 2,
+                "otherwise": "fail",
+                "child": {
+                  "type": "worker",
+                  "id": "fix_build_mcp03",
+                  "engines": [
+                    {
+                      "engine": "claude",
+                      "model": "haiku"
+                    },
+                    {
+                      "engine": "opencode",
+                      "model": "opencode/hy4-flash-free"
+                    }
+                  ],
+                  "switchEngineOn": [
+                    "startup_hang",
+                    "auth_error",
+                    "probe_failed"
+                  ],
+                  "prompt": "Stay inside the project (cwd): do not read or write files outside it. The command `C:/Users/bluen/dotnet11/dotnet.exe build UnityCSharpFastLSP.sln -c Release` failed after task card tasks/cards/CARD-MCP-03-ProgramWiring.md was implemented. Read the log ${build_mcp03.logFile} and fix the code so it passes. Follow tasks/cards/CARD-MCP-00-Overview.md. Do not weaken or delete tests to make them pass; fix the implementation. Do not git commit. Write {\"fixed\": true, \"notes\": \"...\"} to the file named by env PC_BT_RESULT_FILE.",
+                  "summary": "Fix build failure after mcp03",
+                  "timeoutSec": 2700
+                },
+                "handlers": [
+                  {
+                    "class": [
+                      "startup_hang",
+                      "idle_stall"
+                    ],
+                    "do": {
+                      "type": "set",
+                      "var": "hang",
+                      "value": "engine-switch-handled"
+                    }
+                  },
+                  {
+                    "class": "rate_limited",
+                    "do": {
+                      "type": "wait",
+                      "sec": 600
+                    },
+                    "thenRetry": true
+                  },
+                  {
+                    "class": "permission_denied",
+                    "do": {
+                      "type": "set",
+                      "var": "permit",
+                      "value": "requested"
+                    },
+                    "thenRetry": false
+                  },
+                  {
+                    "class": "*",
+                    "do": {
+                      "type": "escalate",
+                      "question": "build still fails after mcp03; how should I proceed?",
+                      "guidance": "The worker failed after all approved engine candidates were tried.",
+                      "expect": [
+                        "continue",
+                        "stop",
+                        "takeover"
+                      ],
+                      "include": {
+                        "logs": [
+                          "fix_build_mcp03"
+                        ],
+                        "logLines": 100
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "job",
+                "id": "rebuild_mcp03",
+                "command": "C:/Users/bluen/dotnet11/dotnet.exe build UnityCSharpFastLSP.sln -c Release",
+                "summary": "Re-run build after fixing mcp03",
+                "timeoutSec": 900,
+                "env": {
+                  "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "fallback",
+        "children": [
+          {
+            "type": "job",
+            "id": "test_mcp03",
+            "command": "C:/Users/bluen/dotnet11/dotnet.exe test tests/UnityCSharpFastLSP.Tests/UnityCSharpFastLSP.Tests.csproj -c Release",
+            "summary": "test after mcp03",
+            "timeoutSec": 1200,
+            "env": {
+              "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11"
+            }
+          },
+          {
+            "type": "sequence",
+            "children": [
+              {
+                "type": "catch",
+                "id": "fix_test_mcp03_guard",
+                "maxRetries": 2,
+                "otherwise": "fail",
+                "child": {
+                  "type": "worker",
+                  "id": "fix_test_mcp03",
+                  "engines": [
+                    {
+                      "engine": "claude",
+                      "model": "haiku"
+                    },
+                    {
+                      "engine": "opencode",
+                      "model": "opencode/hy4-flash-free"
+                    }
+                  ],
+                  "switchEngineOn": [
+                    "startup_hang",
+                    "auth_error",
+                    "probe_failed"
+                  ],
+                  "prompt": "Stay inside the project (cwd): do not read or write files outside it. The command `C:/Users/bluen/dotnet11/dotnet.exe test tests/UnityCSharpFastLSP.Tests/UnityCSharpFastLSP.Tests.csproj -c Release` failed after task card tasks/cards/CARD-MCP-03-ProgramWiring.md was implemented. Read the log ${test_mcp03.logFile} and fix the code so it passes. Follow tasks/cards/CARD-MCP-00-Overview.md. Do not weaken or delete tests to make them pass; fix the implementation. Do not git commit. Write {\"fixed\": true, \"notes\": \"...\"} to the file named by env PC_BT_RESULT_FILE.",
+                  "summary": "Fix test failure after mcp03",
+                  "timeoutSec": 2700
+                },
+                "handlers": [
+                  {
+                    "class": [
+                      "startup_hang",
+                      "idle_stall"
+                    ],
+                    "do": {
+                      "type": "set",
+                      "var": "hang",
+                      "value": "engine-switch-handled"
+                    }
+                  },
+                  {
+                    "class": "rate_limited",
+                    "do": {
+                      "type": "wait",
+                      "sec": 600
+                    },
+                    "thenRetry": true
+                  },
+                  {
+                    "class": "permission_denied",
+                    "do": {
+                      "type": "set",
+                      "var": "permit",
+                      "value": "requested"
+                    },
+                    "thenRetry": false
+                  },
+                  {
+                    "class": "*",
+                    "do": {
+                      "type": "escalate",
+                      "question": "test still fails after mcp03; how should I proceed?",
+                      "guidance": "The worker failed after all approved engine candidates were tried.",
+                      "expect": [
+                        "continue",
+                        "stop",
+                        "takeover"
+                      ],
+                      "include": {
+                        "logs": [
+                          "fix_test_mcp03"
+                        ],
+                        "logLines": 100
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "job",
+                "id": "retest_mcp03",
+                "command": "C:/Users/bluen/dotnet11/dotnet.exe test tests/UnityCSharpFastLSP.Tests/UnityCSharpFastLSP.Tests.csproj -c Release",
+                "summary": "Re-run test after fixing mcp03",
+                "timeoutSec": 1200,
+                "env": {
+                  "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "catch",
+        "id": "card_mcp04_guard",
+        "maxRetries": 2,
+        "otherwise": "fail",
+        "child": {
+          "type": "worker",
+          "id": "card_mcp04",
+          "engines": [
+            {
+              "engine": "claude",
+              "model": "haiku"
+            },
+            {
+              "engine": "opencode",
+              "model": "opencode/hy4-flash-free"
+            }
+          ],
+          "switchEngineOn": [
+            "startup_hang",
+            "auth_error",
+            "probe_failed"
+          ],
+          "prompt": "Stay inside the project (cwd): do not read or write files outside it. If the task requires one, add it to needs and request a permit instead. You are implementing one task card of the UnityCSharpFastLSP MCP mode. First read tasks/cards/CARD-MCP-00-Overview.md (common rules and the compatibility contract) and doc/mcp-csharp-lsp.md (the spec), then implement tasks/cards/CARD-MCP-04-Tests.md completely. Read the existing code you touch (src/UnityCSharpFastLSP.Server/Mcp/LspLoopbackClient.cs, LspServer.cs, LspProxy.cs, Program.cs) before editing. Build with: C:/Users/bluen/dotnet11/dotnet.exe build UnityCSharpFastLSP.sln -c Release (env DOTNET_ROOT=C:\\Users\\bluen\\dotnet11) and fix every warning/error until it builds clean. Do not git commit. Do not add NuGet packages. When done, write a JSON object {\"card\": \"CARD-MCP-04-Tests.md\", \"filesChanged\": [...], \"notes\": \"...\"} to the file named by env PC_BT_RESULT_FILE.",
+          "summary": "Add MCP mode tests",
+          "timeoutSec": 5400
+        },
+        "handlers": [
+          {
+            "class": [
+              "startup_hang",
+              "idle_stall"
+            ],
+            "do": {
+              "type": "set",
+              "var": "hang",
+              "value": "engine-switch-handled"
+            }
+          },
+          {
+            "class": "rate_limited",
+            "do": {
+              "type": "wait",
+              "sec": 600
+            },
+            "thenRetry": true
+          },
+          {
+            "class": "permission_denied",
+            "do": {
+              "type": "set",
+              "var": "permit",
+              "value": "requested"
+            },
+            "thenRetry": false
+          },
+          {
+            "class": "*",
+            "do": {
+              "type": "escalate",
+              "question": "Card CARD-MCP-04-Tests.md failed on every approved engine. Continue, stop, or take over?",
+              "guidance": "The worker failed after all approved engine candidates were tried.",
+              "expect": [
+                "continue",
+                "stop",
+                "takeover"
+              ],
+              "include": {
+                "logs": [
+                  "card_mcp04"
+                ],
+                "logLines": 100
+              }
+            }
+          }
+        ]
+      },
+      {
+        "type": "fallback",
+        "children": [
+          {
+            "type": "job",
+            "id": "build_mcp04",
+            "command": "C:/Users/bluen/dotnet11/dotnet.exe build UnityCSharpFastLSP.sln -c Release",
+            "summary": "build after mcp04",
+            "timeoutSec": 900,
+            "env": {
+              "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11"
+            }
+          },
+          {
+            "type": "sequence",
+            "children": [
+              {
+                "type": "catch",
+                "id": "fix_build_mcp04_guard",
+                "maxRetries": 2,
+                "otherwise": "fail",
+                "child": {
+                  "type": "worker",
+                  "id": "fix_build_mcp04",
+                  "engines": [
+                    {
+                      "engine": "claude",
+                      "model": "haiku"
+                    },
+                    {
+                      "engine": "opencode",
+                      "model": "opencode/hy4-flash-free"
+                    }
+                  ],
+                  "switchEngineOn": [
+                    "startup_hang",
+                    "auth_error",
+                    "probe_failed"
+                  ],
+                  "prompt": "Stay inside the project (cwd): do not read or write files outside it. The command `C:/Users/bluen/dotnet11/dotnet.exe build UnityCSharpFastLSP.sln -c Release` failed after task card tasks/cards/CARD-MCP-04-Tests.md was implemented. Read the log ${build_mcp04.logFile} and fix the code so it passes. Follow tasks/cards/CARD-MCP-00-Overview.md. Do not weaken or delete tests to make them pass; fix the implementation. Do not git commit. Write {\"fixed\": true, \"notes\": \"...\"} to the file named by env PC_BT_RESULT_FILE.",
+                  "summary": "Fix build failure after mcp04",
+                  "timeoutSec": 2700
+                },
+                "handlers": [
+                  {
+                    "class": [
+                      "startup_hang",
+                      "idle_stall"
+                    ],
+                    "do": {
+                      "type": "set",
+                      "var": "hang",
+                      "value": "engine-switch-handled"
+                    }
+                  },
+                  {
+                    "class": "rate_limited",
+                    "do": {
+                      "type": "wait",
+                      "sec": 600
+                    },
+                    "thenRetry": true
+                  },
+                  {
+                    "class": "permission_denied",
+                    "do": {
+                      "type": "set",
+                      "var": "permit",
+                      "value": "requested"
+                    },
+                    "thenRetry": false
+                  },
+                  {
+                    "class": "*",
+                    "do": {
+                      "type": "escalate",
+                      "question": "build still fails after mcp04; how should I proceed?",
+                      "guidance": "The worker failed after all approved engine candidates were tried.",
+                      "expect": [
+                        "continue",
+                        "stop",
+                        "takeover"
+                      ],
+                      "include": {
+                        "logs": [
+                          "fix_build_mcp04"
+                        ],
+                        "logLines": 100
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "job",
+                "id": "rebuild_mcp04",
+                "command": "C:/Users/bluen/dotnet11/dotnet.exe build UnityCSharpFastLSP.sln -c Release",
+                "summary": "Re-run build after fixing mcp04",
+                "timeoutSec": 900,
+                "env": {
+                  "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "fallback",
+        "children": [
+          {
+            "type": "job",
+            "id": "test_mcp04",
+            "command": "C:/Users/bluen/dotnet11/dotnet.exe test tests/UnityCSharpFastLSP.Tests/UnityCSharpFastLSP.Tests.csproj -c Release",
+            "summary": "test after mcp04",
+            "timeoutSec": 1200,
+            "env": {
+              "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11"
+            }
+          },
+          {
+            "type": "sequence",
+            "children": [
+              {
+                "type": "catch",
+                "id": "fix_test_mcp04_guard",
+                "maxRetries": 2,
+                "otherwise": "fail",
+                "child": {
+                  "type": "worker",
+                  "id": "fix_test_mcp04",
+                  "engines": [
+                    {
+                      "engine": "claude",
+                      "model": "haiku"
+                    },
+                    {
+                      "engine": "opencode",
+                      "model": "opencode/hy4-flash-free"
+                    }
+                  ],
+                  "switchEngineOn": [
+                    "startup_hang",
+                    "auth_error",
+                    "probe_failed"
+                  ],
+                  "prompt": "Stay inside the project (cwd): do not read or write files outside it. The command `C:/Users/bluen/dotnet11/dotnet.exe test tests/UnityCSharpFastLSP.Tests/UnityCSharpFastLSP.Tests.csproj -c Release` failed after task card tasks/cards/CARD-MCP-04-Tests.md was implemented. Read the log ${test_mcp04.logFile} and fix the code so it passes. Follow tasks/cards/CARD-MCP-00-Overview.md. Do not weaken or delete tests to make them pass; fix the implementation. Do not git commit. Write {\"fixed\": true, \"notes\": \"...\"} to the file named by env PC_BT_RESULT_FILE.",
+                  "summary": "Fix test failure after mcp04",
+                  "timeoutSec": 2700
+                },
+                "handlers": [
+                  {
+                    "class": [
+                      "startup_hang",
+                      "idle_stall"
+                    ],
+                    "do": {
+                      "type": "set",
+                      "var": "hang",
+                      "value": "engine-switch-handled"
+                    }
+                  },
+                  {
+                    "class": "rate_limited",
+                    "do": {
+                      "type": "wait",
+                      "sec": 600
+                    },
+                    "thenRetry": true
+                  },
+                  {
+                    "class": "permission_denied",
+                    "do": {
+                      "type": "set",
+                      "var": "permit",
+                      "value": "requested"
+                    },
+                    "thenRetry": false
+                  },
+                  {
+                    "class": "*",
+                    "do": {
+                      "type": "escalate",
+                      "question": "test still fails after mcp04; how should I proceed?",
+                      "guidance": "The worker failed after all approved engine candidates were tried.",
+                      "expect": [
+                        "continue",
+                        "stop",
+                        "takeover"
+                      ],
+                      "include": {
+                        "logs": [
+                          "fix_test_mcp04"
+                        ],
+                        "logLines": 100
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "job",
+                "id": "retest_mcp04",
+                "command": "C:/Users/bluen/dotnet11/dotnet.exe test tests/UnityCSharpFastLSP.Tests/UnityCSharpFastLSP.Tests.csproj -c Release",
+                "summary": "Re-run test after fixing mcp04",
+                "timeoutSec": 1200,
+                "env": {
+                  "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "catch",
+        "id": "card_mcp05_guard",
+        "maxRetries": 2,
+        "otherwise": "fail",
+        "child": {
+          "type": "worker",
+          "id": "card_mcp05",
+          "engines": [
+            {
+              "engine": "claude",
+              "model": "haiku"
+            },
+            {
+              "engine": "opencode",
+              "model": "opencode/hy4-flash-free"
+            }
+          ],
+          "switchEngineOn": [
+            "startup_hang",
+            "auth_error",
+            "probe_failed"
+          ],
+          "prompt": "Stay inside the project (cwd): do not read or write files outside it. If the task requires one, add it to needs and request a permit instead. You are implementing one task card of the UnityCSharpFastLSP MCP mode. First read tasks/cards/CARD-MCP-00-Overview.md (common rules and the compatibility contract) and doc/mcp-csharp-lsp.md (the spec), then implement tasks/cards/CARD-MCP-05-Docs.md completely. Read the existing code you touch (src/UnityCSharpFastLSP.Server/Mcp/LspLoopbackClient.cs, LspServer.cs, LspProxy.cs, Program.cs) before editing. Build with: C:/Users/bluen/dotnet11/dotnet.exe build UnityCSharpFastLSP.sln -c Release (env DOTNET_ROOT=C:\\Users\\bluen\\dotnet11) and fix every warning/error until it builds clean. Do not git commit. Do not add NuGet packages. When done, write a JSON object {\"card\": \"CARD-MCP-05-Docs.md\", \"filesChanged\": [...], \"notes\": \"...\"} to the file named by env PC_BT_RESULT_FILE.",
+          "summary": "Write MCP mode documentation",
+          "timeoutSec": 5400
+        },
+        "handlers": [
+          {
+            "class": [
+              "startup_hang",
+              "idle_stall"
+            ],
+            "do": {
+              "type": "set",
+              "var": "hang",
+              "value": "engine-switch-handled"
+            }
+          },
+          {
+            "class": "rate_limited",
+            "do": {
+              "type": "wait",
+              "sec": 600
+            },
+            "thenRetry": true
+          },
+          {
+            "class": "permission_denied",
+            "do": {
+              "type": "set",
+              "var": "permit",
+              "value": "requested"
+            },
+            "thenRetry": false
+          },
+          {
+            "class": "*",
+            "do": {
+              "type": "escalate",
+              "question": "Card CARD-MCP-05-Docs.md failed on every approved engine. Continue, stop, or take over?",
+              "guidance": "The worker failed after all approved engine candidates were tried.",
+              "expect": [
+                "continue",
+                "stop",
+                "takeover"
+              ],
+              "include": {
+                "logs": [
+                  "card_mcp05"
+                ],
+                "logLines": 100
+              }
+            }
+          }
+        ]
+      },
+      {
+        "type": "fallback",
+        "children": [
+          {
+            "type": "job",
+            "id": "build_mcp05",
+            "command": "C:/Users/bluen/dotnet11/dotnet.exe build UnityCSharpFastLSP.sln -c Release",
+            "summary": "build after mcp05",
+            "timeoutSec": 900,
+            "env": {
+              "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11"
+            }
+          },
+          {
+            "type": "sequence",
+            "children": [
+              {
+                "type": "catch",
+                "id": "fix_build_mcp05_guard",
+                "maxRetries": 2,
+                "otherwise": "fail",
+                "child": {
+                  "type": "worker",
+                  "id": "fix_build_mcp05",
+                  "engines": [
+                    {
+                      "engine": "claude",
+                      "model": "haiku"
+                    },
+                    {
+                      "engine": "opencode",
+                      "model": "opencode/hy4-flash-free"
+                    }
+                  ],
+                  "switchEngineOn": [
+                    "startup_hang",
+                    "auth_error",
+                    "probe_failed"
+                  ],
+                  "prompt": "Stay inside the project (cwd): do not read or write files outside it. The command `C:/Users/bluen/dotnet11/dotnet.exe build UnityCSharpFastLSP.sln -c Release` failed after task card tasks/cards/CARD-MCP-05-Docs.md was implemented. Read the log ${build_mcp05.logFile} and fix the code so it passes. Follow tasks/cards/CARD-MCP-00-Overview.md. Do not weaken or delete tests to make them pass; fix the implementation. Do not git commit. Write {\"fixed\": true, \"notes\": \"...\"} to the file named by env PC_BT_RESULT_FILE.",
+                  "summary": "Fix build failure after mcp05",
+                  "timeoutSec": 2700
+                },
+                "handlers": [
+                  {
+                    "class": [
+                      "startup_hang",
+                      "idle_stall"
+                    ],
+                    "do": {
+                      "type": "set",
+                      "var": "hang",
+                      "value": "engine-switch-handled"
+                    }
+                  },
+                  {
+                    "class": "rate_limited",
+                    "do": {
+                      "type": "wait",
+                      "sec": 600
+                    },
+                    "thenRetry": true
+                  },
+                  {
+                    "class": "permission_denied",
+                    "do": {
+                      "type": "set",
+                      "var": "permit",
+                      "value": "requested"
+                    },
+                    "thenRetry": false
+                  },
+                  {
+                    "class": "*",
+                    "do": {
+                      "type": "escalate",
+                      "question": "build still fails after mcp05; how should I proceed?",
+                      "guidance": "The worker failed after all approved engine candidates were tried.",
+                      "expect": [
+                        "continue",
+                        "stop",
+                        "takeover"
+                      ],
+                      "include": {
+                        "logs": [
+                          "fix_build_mcp05"
+                        ],
+                        "logLines": 100
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "job",
+                "id": "rebuild_mcp05",
+                "command": "C:/Users/bluen/dotnet11/dotnet.exe build UnityCSharpFastLSP.sln -c Release",
+                "summary": "Re-run build after fixing mcp05",
+                "timeoutSec": 900,
+                "env": {
+                  "DOTNET_ROOT": "C:\\Users\\bluen\\dotnet11"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

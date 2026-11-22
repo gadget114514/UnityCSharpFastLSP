@@ -137,3 +137,16 @@ To completely eliminate the 800 ms 〜 1500 ms cold startup delay of Roslyn from
 2. **Immediate Capability Reply**: The client receives FastLSP's `ServerCapabilities` within **< 0.2 ms**.
 3. **Pending Message Buffer**: Any early messages sent by the client while Roslyn is booting (`initialize`, `initialized`, `textDocument/didOpen`) are enqueued in a thread-safe `ConcurrentQueue<byte[]> _pendingMessages`.
 4. **Automatic Flush**: The instant upstream stdio streams are ready, all buffered messages are flushed in FIFO order, ensuring zero dropped messages or desynchronizations.
+
+---
+
+## 6. MCP モードからのプロキシ利用
+
+MCP サーバーとして起動する場合（`UnityCSharpFastLSP.Server.exe --mcp --proxy [--upstream <path>]`）も、同じ `LspProxy` を経由します。
+
+- MCP ツールのうち、§1 の FastLSP 応答メソッド（completion・hover・definition・references など）は FastLSP が即答します。
+- それ以外（rename・codeAction・型階層・コンパイラ診断・`unitycsharp.*` コマンドなど）は UnityCSharpLSP に委譲されます。
+- ルーティングは `LspProxy.FastMethods` の判定に一任しており、MCP 層では独自判定しません。
+- `--mcp` のみ（`--proxy` なし）の場合は、委譲せず LSP エラー `-32601` を返します。
+
+詳細は [doc/mcp.md](mcp.md) を参照してください。

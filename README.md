@@ -139,6 +139,56 @@ Add the snippet above directly into your `opencode.json`.
 ### Claude Code / Antigravity / Cursor
 Refer to the [LLM Agent Skill Guide](skills/unity-fast-lsp/SKILL.md) for full setup instructions and shell invocation patterns.
 
+### Using with LLM Agents via MCP
+
+Besides the LSP server mode above, FastLSP can run as an **MCP (Model Context Protocol) server** (`--mcp`). Each tool maps 1:1 to an LSP method (`textDocument/definition` → `textDocument_definition`), with the same names, arguments, and result format as UnityCSharpLSP's MCP mode.
+
+| Choose | When |
+| :--- | :--- |
+| **LSP** (`--stdio`, default) | Your editor or agent client speaks LSP natively (e.g. OpenCode `lsp` setting). |
+| **MCP standalone** (`--mcp`) | Read-only navigation is enough: definition, references, symbols, hover, completion, document symbols. Fastest, no upstream needed. |
+| **MCP proxy** (`--mcp --proxy`) | You also need rename, codeAction, type/call hierarchy, compiler diagnostics, or `unitycsharp.*` commands. Requires UnityCSharpLSP installed. |
+
+Setup examples (replace `<exe>` and `<path>`):
+
+```bash
+# Claude Code: standalone / proxy
+claude mcp add unity-csharp-fast-lsp -- <exe> --mcp --workspace <path>
+claude mcp add unity-csharp-fast-lsp -- <exe> --mcp --proxy --workspace <path>
+```
+
+```json
+// Claude Code (.mcp.json)
+{
+  "mcpServers": {
+    "unity-csharp-fast-lsp": {
+      "command": "<exe>",
+      "args": ["--mcp", "--proxy", "--workspace", "<path>"]
+    }
+  }
+}
+```
+
+```json
+// OpenCode (opencode.json): add --proxy to command for fallback
+{
+  "mcp": {
+    "unity-csharp-fast-lsp": {
+      "type": "local",
+      "command": ["<exe>", "--mcp", "--workspace", "<path>"],
+      "enabled": true
+    }
+  }
+}
+```
+
+Generate the snippet with your resolved binary path: `UnityCSharpFastLSP.Server.exe --print-config --mcp [--proxy] [--workspace <path>]`.
+
+Which tools run where (details and known limitations in [doc/mcp.md](doc/mcp.md)):
+- **FastLSP (standalone and proxy)**: `hover`, `definition`, `declaration`, `typeDefinition`, `implementation`, `references`, `documentSymbol`, `documentHighlight`, `signatureHelp`, `completion`, `workspace_symbol`, `textDocument_formatting`.
+- **Standalone returns error `-32601`** (with a hint to use `--proxy`): everything else, including rename and codeAction.
+- **UnityCSharpLSP via proxy**: everything not in the FastLSP list above.
+
 ---
 
 ## Command-Line Options
@@ -156,7 +206,13 @@ OPTIONS:
                          3) OS PATH resolution, 4) Standard directories. (5: Fails with error).
   --upstream <path>    Explicit path to upstream Roslyn LSP server (e.g. UnityCSharpLSP.Server.exe).
                        If omitted with --proxy, automatically searches following priority 2 -> 3 -> 4.
+  --mcp                Run as MCP (Model Context Protocol) server over stdio. See "Using with LLM Agents via MCP".
+  --workspace <path>   MCP mode: workspace root (default: nearest ancestor containing Assets/ or ProjectSettings/).
+  --settings <json>    MCP mode: settings sent with workspace/didChangeConfiguration at startup
+                       (effective with --proxy only; @<file> to read a file).
+  --timeout <sec>      MCP mode: timeout for each LSP request in seconds (default: 120).
   --print-config       Print LLM agent LSP configuration snippet (opencode.json format) to stdout and exit.
+                       With --mcp, print the MCP configuration snippet instead.
   -h, --help           Show help description and exit.
 ```
 

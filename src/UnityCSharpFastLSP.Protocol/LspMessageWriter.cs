@@ -66,13 +66,24 @@ public sealed class LspMessageWriter
 
     public void WriteFramedMessage(byte[] body)
     {
-        byte[] header = Encoding.ASCII.GetBytes($"Content-Length: {body.Length}\r\n\r\n");
+        byte[] frame = Frame(body);
 
+        // ヘッダーとボディを 1 回の Write で書く。プロキシでは Upstream 転送スレッドも同じ
+        // 出力ストリームに書くため、フレーム単位で不可分にしないと混線する。
         lock (_lock)
         {
-            _output.Write(header, 0, header.Length);
-            _output.Write(body, 0, body.Length);
+            _output.Write(frame, 0, frame.Length);
             _output.Flush();
         }
+    }
+
+    /// <summary>LSP の Content-Length ヘッダーを付けたフレームを 1 つのバッファで返す。</summary>
+    public static byte[] Frame(ReadOnlySpan<byte> body)
+    {
+        byte[] header = Encoding.ASCII.GetBytes($"Content-Length: {body.Length}\r\n\r\n");
+        byte[] frame = new byte[header.Length + body.Length];
+        header.CopyTo(frame, 0);
+        body.CopyTo(frame.AsSpan(header.Length));
+        return frame;
     }
 }
