@@ -225,6 +225,8 @@ OPTIONS:
   --timeout <sec>      MCP mode: timeout for each LSP request in seconds (default: 120).
   --print-config       Print LLM agent LSP configuration snippet (opencode.json format) to stdout and exit.
                        With --mcp, print the MCP configuration snippet instead.
+  --clear-capabilities-cache [kind]
+                       Delete cached upstream capabilities (all kinds, or one kind) and exit.
   -h, --help           Show help description and exit.
 ```
 
@@ -237,6 +239,10 @@ OPTIONS:
    - Select with `--upstream-kind <auto|unitycsharp|csharp-ls|omnisharp>`. `auto` (default) tries each provider in order until one starts; an explicit kind tries only that provider.
    - For each provider: 1) explicit `--upstream <path>`, 2) kind-specific env var (`UNITY_CSHARP_LSP_PATH`, `CSHARP_LS_PATH`, `OMNISHARP_PATH`), 3) OS PATH (`UnityCSharpLSP.Server.exe`, `csharp-ls`, `omnisharp`, ...), 4) standard install dirs (`%LOCALAPPDATA%\Programs\...`, `~/.dotnet/tools`, ...).
    - If no provider starts, FastLSP keeps answering fast methods; heavy / empty-result requests cannot fall back. This is non-fatal.
+3. **Upstream Capabilities Cache**:
+   - The proxy answers `initialize` immediately and does not wait for upstream. It advertises FastLSP's capabilities plus the upstream capabilities cached last time for the same `--upstream-kind` (FastLSP's entries win; `textDocumentSync`, `positionEncoding` and `semanticTokensProvider` are never taken from upstream).
+   - Every upstream `initialize` reply is compared with the cache and overwrites it when it differs, so a changed upstream is advertised from the next start. The first start has no cache and advertises FastLSP's capabilities only.
+   - Location: `%LOCALAPPDATA%\UnityCSharpFastLSP\upstream-capabilities\<kind>.json` (override with `UNITY_CSHARP_FAST_LSP_CACHE_DIR`). Clear with `--clear-capabilities-cache [kind]`.
 
 ---
 

@@ -42,6 +42,9 @@ OPTIONS:
   --settings <json>    MCP mode: settings sent with workspace/didChangeConfiguration at startup
                        (effective with --proxy only). Use @<file> to read the JSON from a file.
   --timeout <sec>      MCP mode: timeout for each LSP request in seconds (default: 120).
+  --clear-capabilities-cache [kind]
+                       Delete the cached upstream capabilities (all kinds, or only auto / unitycsharp /
+                       csharp-ls / omnisharp) and exit. See UPSTREAM CAPABILITIES CACHE below.
   --selftest, --test   Run end-to-end verification self-test (cross-file definition jumps) and exit.
   --print-config       Print LLM agent LSP configuration snippet (opencode.json format) to stdout and exit.
                        With --mcp, print the MCP configuration snippet (mcpServers format) instead.
@@ -63,6 +66,15 @@ INTELLIGENT HYBRID PROXY PRIORITY:
     5. Providers are tried in order: UnityCSharpLSP -> csharp-ls -> OmniSharp.
        With --upstream-kind <k> only that provider is tried. Upstream failure is non-fatal:
        FastLSP keeps answering its fast methods; heavy / empty-result requests cannot fall back.
+
+UPSTREAM CAPABILITIES CACHE (--proxy):
+    The proxy answers 'initialize' immediately and does not wait for the upstream server.
+    It advertises FastLSP's capabilities merged with the upstream capabilities saved last time
+    for the same --upstream-kind. FastLSP's own entries win (textDocumentSync, positionEncoding
+    and semanticTokensProvider are never taken from upstream). The upstream's initialize reply
+    updates the cache, so changes take effect on the next start. The first start has no cache.
+    Location: %LOCALAPPDATA%\UnityCSharpFastLSP\upstream-capabilities\<kind>.json
+              (override with UNITY_CSHARP_FAST_LSP_CACHE_DIR). Clear with --clear-capabilities-cache.
 
 LLM / AI AGENT INTEGRATION (OpenCode, Claude Code, Antigravity, Cursor):
   To register this fast LSP server with OpenCode, add to your opencode.json:
@@ -126,6 +138,11 @@ NOTES:
             {
                 Console.WriteLine(HelpDescription);
                 return 0;
+            }
+
+            if (args.Contains("--clear-capabilities-cache"))
+            {
+                return ClearCapabilitiesCache(args);
             }
 
             if (args.Contains("--print-config"))
@@ -329,6 +346,52 @@ $$"""
             WriteIndented = true,
             Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         }));
+        return 0;
+    }
+
+    /// <summary>
+    /// --clear-capabilities-cache [kind]: キャッシュ済みの upstream capabilities を削除して終了する。
+    /// kind 省略時は全 kind。
+    /// </summary>
+    private static int ClearCapabilitiesCache(string[] args)
+    {
+        UpstreamKind? kind = null;
+        int index = Array.IndexOf(args, "--clear-capabilities-cache");
+        if (index + 1 < args.Length && !args[index + 1].StartsWith("--", StringComparison.Ordinal))
+        {
+            try
+            {
+                kind = UpstreamServerRegistry.ParseKind(args[index + 1]);
+            }
+            catch (ArgumentException ex)
+            {
+                Console.Error.WriteLine($"UnityCSharpFastLSP.Server: {ex.Message}");
+                return 1;
+            }
+        }
+
+        var cache = UpstreamCapabilitiesCache.CreateDefault();
+        List<string> deleted;
+        try
+        {
+            deleted = cache.Clear(kind);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"UnityCSharpFastLSP.Server: could not clear capabilities cache: {ex.Message}");
+            return 1;
+        }
+
+        string target = kind is UpstreamKind k ? UpstreamServerRegistry.CanonicalName(k) : "all kinds";
+        Console.WriteLine($"Capabilities cache ({target}) in {cache.Directory}:");
+        if (deleted.Count == 0)
+        {
+            Console.WriteLine("  nothing to delete");
+        }
+        foreach (string path in deleted)
+        {
+            Console.WriteLine($"  deleted {path}");
+        }
         return 0;
     }
 

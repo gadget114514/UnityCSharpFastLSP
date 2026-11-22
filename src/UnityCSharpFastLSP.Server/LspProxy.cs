@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using UnityCSharpFastLSP.Protocol;
 
 namespace UnityCSharpFastLSP.Server;
@@ -17,6 +19,13 @@ public sealed class LspProxy : IDisposable
     private readonly UpstreamKind _requestedKind;
     private readonly string? _workspacePath;
     private volatile UpstreamKind _upstreamKind;
+    private readonly UpstreamCapabilitiesCache _capabilitiesCache;
+
+    /// <summary>クライアントの initialize リクエスト id（生 JSON）。upstream の initialize 応答の識別に使う。</summary>
+    private volatile string? _initializeRequestId;
+
+    /// <summary>今回 advertise に使ったキャッシュ済み upstream capabilities（無ければ null）。</summary>
+    private JsonObject? _advertisedUpstreamCapabilities;
 
     private static readonly HashSet<string> FastMethods = new(StringComparer.Ordinal)
     {
@@ -69,8 +78,10 @@ public sealed class LspProxy : IDisposable
         Stream clientOutput,
         string? upstreamExecutablePath = null,
         UpstreamKind upstreamKind = UpstreamKind.Auto,
-        string? workspacePath = null)
+        string? workspacePath = null,
+        UpstreamCapabilitiesCache? capabilitiesCache = null)
     {
+        _capabilitiesCache = capabilitiesCache ?? UpstreamCapabilitiesCache.CreateDefault();
         _clientOutput = clientOutput;
         _fastServer = new LspServer(clientOutput, isProxy: true);
         _requestedKind = upstreamKind;
@@ -150,7 +161,12 @@ public sealed class LspProxy : IDisposable
         if (method == "initialize")
         {
             // FastLSP 側で Capabilities (rename, codeAction を含む) を即座に返答 (< 0.2ms)！
-            _fastServer.HandleMessage(message);
+            // upstream の応答は待たず、前回キャッシュした upstream capabilities をマージして advertise する。
+            if (root.TryGetProperty("id", out JsonElement idElem))
+            {
+                _initializeRequestId = idElem.GetRawText();
+            }
+            HandleInitialize(message);
 
             // Upstream にも非同期転送して Roslyn のバックグラウンド初期化を開始
             ForwardToUpstream(message);
@@ -168,6 +184,79 @@ public sealed class LspProxy : IDisposable
         // Upstream (UnityCSharpLSP) に委譲
         ForwardToUpstream(message);
         return true;
+    }
+
+    /// <summary>
+    /// FastLSP の initialize 応答を捕捉し、キャッシュ済みの upstream capabilities をマージしてクライアントへ返す。
+    /// </summary>
+    private void HandleInitialize(byte[] message)
+    {
+        _fastServer.BeginCapture();
+        List<byte[]> captured;
+        try
+        {
+            _fastServer.HandleMessage(message);
+        }
+        finally
+        {
+            captured = _fastServer.EndCapture();
+        }
+
+        JsonObject? cached = _capabilitiesCache.Load(_requestedKind);
+        _advertisedUpstreamCapabilities = cached;
+        if (cached != null)
+        {
+            Console.Error.WriteLine(
+                $"[LspProxy] Advertising cached {UpstreamServerRegistry.DisplayName(_requestedKind)} capabilities ({_capabilitiesCache.GetPath(_requestedKind)})");
+        }
+
+        foreach (byte[] body in captured)
+        {
+            WriteToClient(cached != null ? MergeCapabilities(body, cached) : body);
+        }
+    }
+
+    /// <summary>initialize 応答の result.capabilities に upstream の capabilities を足した本文を返す。</summary>
+    private static byte[] MergeCapabilities(byte[] body, JsonObject upstream)
+    {
+        try
+        {
+            if (JsonNode.Parse(body) is JsonObject root &&
+                root["result"]?["capabilities"] is JsonObject fast)
+            {
+                UpstreamCapabilitiesCache.MergeInto(fast, upstream);
+                return Encoding.UTF8.GetBytes(root.ToJsonString());
+            }
+        }
+        catch (JsonException)
+        {
+        }
+        return body;
+    }
+
+    /// <summary>upstream の initialize 応答から capabilities を取り出し、kind ごとのキャッシュを更新する。</summary>
+    private void SaveUpstreamCapabilities(JsonElement result)
+    {
+        if (JsonNode.Parse(result.GetRawText()) is not JsonObject resultNode) return;
+        if (resultNode["capabilities"] is not JsonObject capabilities) return;
+        JsonNode? serverInfo = resultNode["serverInfo"];
+
+        UpstreamKind actual = _upstreamKind;
+        bool changed = _capabilitiesCache.Save(actual, capabilities, serverInfo);
+        if (_requestedKind != actual)
+        {
+            // auto 指定時は「auto で選ばれたもの」として次回の auto 起動でも使えるよう保存する
+            changed |= _capabilitiesCache.Save(_requestedKind, capabilities, serverInfo);
+        }
+
+        bool matchesAdvertised = _advertisedUpstreamCapabilities != null &&
+            JsonNode.DeepEquals(_advertisedUpstreamCapabilities, capabilities);
+        if (changed || !matchesAdvertised)
+        {
+            Console.Error.WriteLine(
+                $"[LspProxy] Cached {UpstreamServerRegistry.DisplayName(actual)} capabilities to {_capabilitiesCache.GetPath(actual)}" +
+                (matchesAdvertised ? "" : "; they differ from what was advertised and take effect on the next start"));
+        }
     }
 
     /// <summary>
@@ -330,10 +419,14 @@ public sealed class LspProxy : IDisposable
                 using var doc = JsonDocument.Parse(message);
                 var root = doc.RootElement;
 
-                // initialize のレスポンスは FastLSP がすでに返答しているためスキップ
-                if (root.TryGetProperty("result", out var resElem) && resElem.ValueKind == JsonValueKind.Object &&
-                    resElem.TryGetProperty("capabilities", out _))
+                // initialize のレスポンスは FastLSP がすでに返答しているためクライアントへは送らない。
+                // capabilities は次回起動の advertise 用にキャッシュする。
+                if (!root.TryGetProperty("method", out _) &&
+                    root.TryGetProperty("result", out var resElem) && resElem.ValueKind == JsonValueKind.Object &&
+                    resElem.TryGetProperty("capabilities", out _) &&
+                    IsInitializeResponse(root))
                 {
+                    SaveUpstreamCapabilities(resElem);
                     continue;
                 }
 
@@ -350,6 +443,14 @@ public sealed class LspProxy : IDisposable
                 Console.Error.WriteLine($"LspProxy: Error forwarding from upstream: {ex.Message}");
             }
         }
+    }
+
+    private bool IsInitializeResponse(JsonElement root)
+    {
+        string? initId = _initializeRequestId;
+        // id を記録できていない場合は従来どおり capabilities を持つ応答を initialize 応答とみなす
+        if (initId == null) return true;
+        return root.TryGetProperty("id", out JsonElement id) && id.GetRawText() == initId;
     }
 
     private async Task ReadUpstreamStderrLoop(string name, StreamReader stderr, CancellationToken ct)
