@@ -10,6 +10,10 @@ public sealed class WorkspaceManager
     private readonly SymbolIndex _symbolIndex;
     private readonly ConcurrentDictionary<string, string> _filePaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly ManualResetEventSlim _indexReady = new(false);
+    private readonly UnityGuidIndex _guidIndex = new();
+
+    /// <summary>Unity アセット GUID（.meta）の索引。</summary>
+    public UnityGuidIndex GuidIndex => _guidIndex;
 
     /// <summary>ワークスペースのインデックス作成が完了したか。</summary>
     public bool IsIndexReady => _indexReady.IsSet;
@@ -44,6 +48,19 @@ public sealed class WorkspaceManager
         {
             return 0;
         }
+
+        // .meta の GUID 索引は C# のシンボル索引と並行して作る
+        Task guidTask = Task.Run(() =>
+        {
+            try
+            {
+                _guidIndex.Index(rootPath);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[WorkspaceManager] GUID index failed: {ex.Message}");
+            }
+        });
 
         var files = new List<string>();
         string assetsDir = Path.Combine(rootPath, "Assets");
@@ -89,6 +106,7 @@ public sealed class WorkspaceManager
             }
         });
 
+        guidTask.Wait();
         return files.Count;
     }
 

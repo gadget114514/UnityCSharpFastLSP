@@ -35,7 +35,7 @@ public class McpProxyTests
 
         JsonArray tools = McpTestSession.ResultOf(await mcp.RequestAsync("tools/list"))["tools"]!.AsArray();
 
-        Assert.Equal(38, tools.Count);
+        Assert.Equal(40, tools.Count);
     }
 
     /// <summary>

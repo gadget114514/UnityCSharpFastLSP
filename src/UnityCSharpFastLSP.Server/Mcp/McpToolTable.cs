@@ -157,7 +157,32 @@ public static class McpToolTable
                 F("uri", Str("file:/// URI, absolute path, or workspace-relative path"))
             )),
             Obj(F("uri", Str("file:/// URI, absolute path, or workspace-relative path")))),
+
+        // ---- 追加: Unity GUID（FastLSP 独自メソッド unityFast/*） ----
+        new McpTool("unity_guid_definition", LspServer.GuidDefinitionMethod, McpToolKind.LspRequest, true,
+            "Resolve a Unity asset GUID to its .meta file and asset. Pass 'guid' (32 hex chars) or 'asset' " +
+            "(path of an asset, script or .meta; file:/// URI, absolute, or workspace-relative). Returns {guid, assetUri, meta: Location} or null.",
+            GuidSchema(withMax: false)),
+        new McpTool("unity_guid_references", LspServer.GuidReferencesMethod, McpToolKind.LspRequest, true,
+            "Find the scenes, prefabs, materials, ScriptableObjects, .meta and .asmdef/.asmref files that reference a Unity asset GUID. " +
+            "Pass 'guid' or 'asset' (e.g. 'Assets/Scripts/Player.cs' to find where the MonoBehaviour is attached). " +
+            "Each reference has uri, 0-based range, lineText, and for YAML the owning object's classId/objectFileId and the reference fileId.",
+            GuidSchema(withMax: true)),
     ];
+
+    private static JsonObject GuidSchema(bool withMax)
+    {
+        var fields = new List<Field>
+        {
+            F("guid", Str("Unity asset GUID (32 hexadecimal characters). Either guid or asset is required.")),
+            F("asset", Str("Asset, script or .meta path (file:/// URI, absolute, or workspace-relative). Used when guid is omitted.")),
+        };
+        if (withMax)
+        {
+            fields.Add(F("maxResults", Int($"Maximum number of references to return (default {UnityCSharpFastLSP.Workspace.UnityGuidIndex.DefaultMaxResults})", nonNegative: true)));
+        }
+        return Obj(fields.ToArray());
+    }
 
     private static McpTool Lsp(string method, bool readOnly, string summary, JsonObject schema, McpToolKind kind = McpToolKind.LspRequest) =>
         new(method.Replace('/', '_'), method, kind, readOnly, Describe(summary, schema), schema);

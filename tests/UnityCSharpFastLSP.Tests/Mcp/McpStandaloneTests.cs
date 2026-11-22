@@ -40,6 +40,8 @@ public class McpStandaloneTests
         "textDocument_moniker",
         "textDocument_prepareRename",
         "lsp_diagnostics_cached",
+        "unity_guid_definition",
+        "unity_guid_references",
     ];
 
     // 仕様 §4.2 / §4.3 の非読み取り系
@@ -99,7 +101,7 @@ public class McpStandaloneTests
         JsonArray tools = result["tools"]!.AsArray();
         var names = tools.Select(t => t!["name"]!.GetValue<string>()).ToList();
 
-        Assert.Equal(38, names.Count);
+        Assert.Equal(40, names.Count);
         Assert.Equal(names.Count, names.Distinct(StringComparer.Ordinal).Count());
 
         foreach (string expected in ReadOnlyTools.Concat(WriteTools))

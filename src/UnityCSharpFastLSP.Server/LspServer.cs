@@ -2,6 +2,7 @@ using System.Text.Json;
 using UnityCSharpFastLSP.Protocol;
 using UnityCSharpFastLSP.Semantics;
 using UnityCSharpFastLSP.Syntax;
+using UnityCSharpFastLSP.Workspace;
 
 namespace UnityCSharpFastLSP.Server;
 
@@ -16,6 +17,12 @@ public sealed class LspServer
     // 定義ジャンプ系の要求は、ワークスペースのインデックス完了を待ってから解決する。
     // 大規模プロジェクトでは初回インデックスに時間がかかるため、上限付きで待つ。
     private static readonly TimeSpan IndexWaitTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>独自拡張: guid（またはアセット）の .meta とアセット本体を返す。</summary>
+    public const string GuidDefinitionMethod = "unityFast/guidDefinition";
+
+    /// <summary>独自拡張: guid を参照しているシーン・プレハブ等の位置を返す。</summary>
+    public const string GuidReferencesMethod = "unityFast/guidReferences";
 
     public LspServer(Stream output, bool isProxy = false)
     {
@@ -168,6 +175,14 @@ public sealed class LspServer
 
                 case "workspace/symbol":
                     HandleWorkspaceSymbol(id, parameters);
+                    break;
+
+                case GuidDefinitionMethod:
+                    HandleGuidDefinition(id, parameters);
+                    break;
+
+                case GuidReferencesMethod:
+                    HandleGuidReferences(id, parameters);
                     break;
 
                 default:
@@ -455,6 +470,58 @@ public sealed class LspServer
         }
 
         _writer.WriteRawResponse(id, "[]"u8.ToArray());
+    }
+
+    private string? ResolveGuidQuery(object? id, JsonElement parameters, out GuidQueryParams? query)
+    {
+        query = parameters.ValueKind == JsonValueKind.Object
+            ? JsonSerializer.Deserialize(parameters, LspJsonSerializerContext.Default.GuidQueryParams)
+            : null;
+        if (query == null || (string.IsNullOrWhiteSpace(query.Guid) && string.IsNullOrWhiteSpace(query.Asset)))
+        {
+            _writer.WriteError(id, JsonRpcErrorCode.InvalidParams, "Invalid params: 'guid' or 'asset' is required.");
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Guid) && !UnityGuidIndex.IsGuid(query.Guid.Trim()))
+        {
+            _writer.WriteError(id, JsonRpcErrorCode.InvalidParams, "Invalid params: 'guid' must be 32 hexadecimal characters.");
+            return null;
+        }
+
+        _state.WorkspaceManager.WaitForIndex(IndexWaitTimeout);
+        return _state.WorkspaceManager.GuidIndex.ResolveGuid(query.Guid, query.Asset) ?? "";
+    }
+
+    private void HandleGuidDefinition(object? id, JsonElement parameters)
+    {
+        string? guid = ResolveGuidQuery(id, parameters, out _);
+        if (guid == null) return;
+
+        GuidDefinitionResult? result = guid.Length == 0 ? null : _state.WorkspaceManager.GuidIndex.FindDefinition(guid);
+        if (result != null)
+        {
+            _writer.WriteResponse(id, result, LspJsonSerializerContext.Default.GuidDefinitionResult);
+            return;
+        }
+
+        _writer.WriteRawResponse(id, "null"u8.ToArray());
+    }
+
+    private void HandleGuidReferences(object? id, JsonElement parameters)
+    {
+        string? guid = ResolveGuidQuery(id, parameters, out GuidQueryParams? query);
+        if (guid == null) return;
+
+        if (guid.Length == 0)
+        {
+            // asset 指定で .meta が見つからない
+            _writer.WriteRawResponse(id, "null"u8.ToArray());
+            return;
+        }
+
+        GuidReferencesResult result = _state.WorkspaceManager.GuidIndex.FindReferences(guid, query!.MaxResults);
+        _writer.WriteResponse(id, result, LspJsonSerializerContext.Default.GuidReferencesResult);
     }
 
     private void HandleSignatureHelp(object? id, JsonElement parameters)

@@ -32,7 +32,16 @@ public sealed class LspProxy : IDisposable
         "textDocument/semanticTokens/full",
         "textDocument/documentHighlight",
         "textDocument/documentSymbol",
-        "workspace/symbol"
+        "workspace/symbol",
+        LspServer.GuidDefinitionMethod,
+        LspServer.GuidReferencesMethod,
+    };
+
+    /// <summary>FastLSP 独自のメソッド。Upstream は知らないので、空結果でもフォールバックしない。</summary>
+    private static readonly HashSet<string> NoFallbackMethods = new(StringComparer.Ordinal)
+    {
+        LspServer.GuidDefinitionMethod,
+        LspServer.GuidReferencesMethod,
     };
 
     /// <summary>FastLSP が直接応答するメソッドか（false なら Upstream へ委譲される）。</summary>
@@ -134,7 +143,7 @@ public sealed class LspProxy : IDisposable
         //    ただし結果が空 (null / [] / {} / "") の場合は Upstream に委譲する。
         if (FastMethods.Contains(method))
         {
-            return HandleFastRequest(message);
+            return HandleFastRequest(message, allowFallback: !NoFallbackMethods.Contains(method));
         }
 
         // 3. initialize / initialized / shutdown / exit
@@ -165,7 +174,7 @@ public sealed class LspProxy : IDisposable
     /// FastLSP に処理させつつ応答を捕捉し、結果が空なら Upstream (UnityCSharpLSP) に委譲する。
     /// 非空なら捕捉した応答をクライアントへ返すので、通常の高速パスのレイテンシは変わらない。
     /// </summary>
-    private bool HandleFastRequest(byte[] message)
+    private bool HandleFastRequest(byte[] message, bool allowFallback)
     {
         _fastServer.BeginCapture();
         bool result;
@@ -199,7 +208,7 @@ public sealed class LspProxy : IDisposable
             return result;
         }
 
-        if (IsEmptyResult(response) && CanFallbackToUpstream())
+        if (allowFallback && IsEmptyResult(response) && CanFallbackToUpstream())
         {
             // FastLSP の空応答は捨て、Upstream に同じ id で転送する。
             // Upstream の応答は ReadUpstreamLoop がクライアントへ透過転送する。

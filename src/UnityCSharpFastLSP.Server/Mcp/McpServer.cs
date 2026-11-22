@@ -302,7 +302,9 @@ public sealed class McpServer : IDisposable
                 "textDocument.uri may be a file:/// URI, an absolute path, or a workspace-relative path. " +
                 "Standalone mode answers only the fast LSP methods; run with --mcp --proxy (optionally --upstream-kind) " +
                 "to fall back to an upstream LSP server " +
-                "for rename, codeAction and other heavy methods.",
+                "for rename, codeAction and other heavy methods. " +
+                "unity_guid_definition / unity_guid_references resolve Unity asset GUIDs (.meta) and find the scenes, " +
+                "prefabs and other assets that reference a GUID or an asset path (e.g. a MonoBehaviour script).",
         };
     }
 
@@ -409,6 +411,7 @@ public sealed class McpServer : IDisposable
     private async Task<LspResult> CallLspRequestAsync(string method, JsonObject arguments, CancellationToken ct)
     {
         PrepareDocument(arguments);
+        NormalizeAssetArgument(arguments);
 
         string? reason = _client.UnavailableReason(method);
         if (reason != null)
@@ -436,6 +439,15 @@ public sealed class McpServer : IDisposable
         string uri = NormalizeUri(raw);
         textDocument["uri"] = uri;
         _sync.Sync(uri);
+    }
+
+    /// <summary>GUID ツールの asset（URI / 絶対 / 相対パス）を file:/// URI に正規化する。ドキュメント同期はしない。</summary>
+    private void NormalizeAssetArgument(JsonObject arguments)
+    {
+        if (GetString(arguments["asset"]) is string raw && raw.Length > 0)
+        {
+            arguments["asset"] = NormalizeUri(raw);
+        }
     }
 
     private async Task<LspResult> ResetAsync(CancellationToken ct)

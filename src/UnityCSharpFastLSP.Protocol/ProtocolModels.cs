@@ -349,3 +349,34 @@ public static class UriHelper
         return uri;
     }
 }
+
+// ---- Unity GUID 拡張（unityFast/guidDefinition, unityFast/guidReferences） ----
+
+/// <summary>guid（32 桁 16 進）か asset（file URI / 絶対パス）のどちらかを指定する。</summary>
+public sealed record GuidQueryParams(
+    [property: JsonPropertyName("guid")] string? Guid = null,
+    [property: JsonPropertyName("asset")] string? Asset = null,
+    [property: JsonPropertyName("maxResults")] int? MaxResults = null
+);
+
+public sealed record GuidDefinitionResult(
+    [property: JsonPropertyName("guid")] string Guid,
+    [property: JsonPropertyName("assetUri")] string AssetUri,
+    [property: JsonPropertyName("meta")] Location Meta
+);
+
+public sealed record GuidReference(
+    [property: JsonPropertyName("uri")] string Uri,
+    [property: JsonPropertyName("range")] Range Range,
+    [property: JsonPropertyName("lineText")] string LineText,
+    [property: JsonPropertyName("classId")] int? ClassId = null,
+    [property: JsonPropertyName("objectFileId")] long? ObjectFileId = null,
+    [property: JsonPropertyName("fileId")] long? FileId = null
+);
+
+public sealed record GuidReferencesResult(
+    [property: JsonPropertyName("guid")] string Guid,
+    [property: JsonPropertyName("assetUri")] string? AssetUri,
+    [property: JsonPropertyName("references")] List<GuidReference> References,
+    [property: JsonPropertyName("truncated")] bool Truncated
+);

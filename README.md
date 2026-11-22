@@ -55,6 +55,7 @@ For the full detailed benchmark methodology, in-process micro-benchmarks, and co
 - **Pre-baked Unity API Dictionary**: In-memory dictionary for common Unity classes (`Transform`, `GameObject`, `Vector3`, `Mathf`, `Time`, `Debug`, `Physics`, `Component`, `MonoBehaviour`, `Color`).
 - **Signature Help**: Real-time parameter signatures and active parameter tracking on typing `(` and `,`.
 - **Semantic Highlighting**: Standard LSP delta-encoded semantic tokens for classes, structs, methods, properties, and keywords.
+- **Unity Asset GUID Lookup (MCP)**: `unity_guid_definition` resolves a GUID to its `.meta`/asset, and `unity_guid_references` finds the scenes, prefabs and assets that reference a GUID or a script (e.g. where a MonoBehaviour is attached), without Unity running.
 - **LLM Agent Ready**: Self-describing `--print-config` and `--help` with `unity-csharp-fast-2nek` keyword for direct integration with AI coding agents.
 
 ---

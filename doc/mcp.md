@@ -104,7 +104,7 @@ claude mcp add unity-csharp-fast-lsp -- <path/to/UnityCSharpFastLSP.Server.exe> 
 
 ---
 
-## 4. ツール一覧（全 38 ツール）
+## 4. ツール一覧（全 40 ツール）
 
 ツール名 = LSP メソッド名の `/` を `_` に置換したものです（例: `textDocument/definition` → `textDocument_definition`）。`arguments` は LSP の params オブジェクトそのもの、結果は LSP の result JSON です。
 
@@ -165,6 +165,17 @@ claude mcp add unity-csharp-fast-lsp -- <path/to/UnityCSharpFastLSP.Server.exe> 
 | `workspace_didChangeConfiguration` | 通知を送り `null` を返す | 通知は無視される（§6） | UnityCSharpLSP へ転送 |
 | `lsp_reset` | ブリッジ独自。全ドキュメント `didClose` + `unitycsharp.reloadWorkspace` | didClose のみ（reload は実行されない。§6） | didClose + UnityCSharpLSP で reload |
 | `lsp_diagnostics_cached` | ブリッジ独自。`publishDiagnostics` のキャッシュを返す（`uri` 省略で全件） | ブリッジ内で完結 | ブリッジ内で完結 |
+| `unity_guid_definition` | FastLSP 独自 `unityFast/guidDefinition`。`guid` または `asset` から `.meta` とアセット本体を返す（`readOnlyHint`） | FastLSP | FastLSP（upstream へフォールバックしない） |
+| `unity_guid_references` | FastLSP 独自 `unityFast/guidReferences`。guid を参照するシーン・プレハブ・マテリアル・`.asset`・`.meta`・`.asmdef/.asmref` の位置を返す（`readOnlyHint`） | FastLSP | FastLSP（upstream へフォールバックしない） |
+
+#### Unity GUID ツール
+
+- 引数: `guid`（32 桁 16 進）または `asset`（アセット・スクリプト・`.meta` のパス。`file:///` URI / 絶対 / ワークスペース相対）。`unity_guid_references` は `maxResults`（既定 500）も取る。
+- `unity_guid_definition` の結果: `{ guid, assetUri, meta: Location }`（見つからなければ `null`）。
+- `unity_guid_references` の結果: `{ guid, assetUri, references: [{ uri, range, lineText, classId?, objectFileId?, fileId? }], truncated }`。
+  `classId` / `objectFileId` は YAML 上の所属オブジェクト（`--- !u!<classId> &<objectFileId>`）、`fileId` は同じ行の `fileID:`。
+- 索引方式: 起動時に `Assets/`・`Packages/`・`Library/PackageCache/` の `*.meta` から guid → アセットだけを常駐索引する。参照は呼び出しのたびにテキストアセットを並列走査する（Binary 直列化のアセットは対象外）。索引後に追加された `.meta` は未登録 guid の問い合わせ時に再走査して拾う（最短 5 秒間隔）。
+- 例: `{"asset":"Assets/Scripts/Player.cs"}` → `Player` MonoBehaviour をアタッチしたプレハブ・シーンの `m_Script` 行の一覧。
 
 `workspace_executeCommand` の `command` に指定できる値（enum）:
 `unitycsharp.reloadWorkspace`, `unitycsharp.showWorkspaceInfo`, `unitycsharp.getSceneOrPrefabHierarchy`, `unitycsharp.findSymbolUsagesInAssets`, `unitycsharp.findGuidReferences`, `unitycsharp.listReferencedGuids`, `unitycsharp.assetServerStatus`。
