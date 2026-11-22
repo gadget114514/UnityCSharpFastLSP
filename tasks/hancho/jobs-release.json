@@ -33,10 +33,10 @@
       "id": "rel-installer",
       "command": "\"C:/Users/bluen/AppData/Local/Programs/Inno Setup 6/ISCC.exe\" installer.iss",
       "cwd": "D:/wsgit/UnityCSharpFastLSP",
-      "summary": "Build UnityCSharpFastLSP-v0.3.1-Setup.exe installer",
+      "summary": "Build UnityCSharpFastLSP-v0.3.2-Setup.exe installer",
       "timeoutSec": 900,
       "dependsOn": ["rel-publish"],
-      "success": { "exitCode": 0, "filesNewer": ["artifacts/UnityCSharpFastLSP-v0.3.1-Setup.exe"] }
+      "success": { "exitCode": 0, "filesNewer": ["artifacts/UnityCSharpFastLSP-v0.3.2-Setup.exe"] }
     }
   ]
 }
