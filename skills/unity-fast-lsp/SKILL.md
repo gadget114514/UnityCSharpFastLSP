@@ -1,6 +1,6 @@
 ---
 name: unity-fast-lsp
-description: Guide for LLMs and AI agents (OpenCode, Claude Code, Cursor, Antigravity) on discovering, configuring, and leveraging UnityCSharpFastLSP for ultra-fast C# intelligence in Unity projects. Covers both the LSP server mode and the MCP server mode (--mcp, MCP tool calls such as textDocument_definition, workspace_symbol, lsp_reset), including the --proxy fallback to UnityCSharpLSP for rename, codeAction, call/type hierarchy and unitycsharp.* commands. Use this skill when configuring a lightweight C# language server or MCP server, registering it with Claude Code or OpenCode, querying symbol definitions or references, extracting document outlines, calling MCP tools, or integrating with Unity project codebases.
+description: Guide for LLMs and AI agents (OpenCode, Claude Code, Cursor, Antigravity) on discovering, configuring, and leveraging UnityCSharpFastLSP for ultra-fast C# intelligence in Unity projects. Covers both the LSP server mode and the MCP server mode (--mcp, MCP tool calls such as textDocument_definition, workspace_symbol, lsp_reset), including the --proxy fallback to UnityCSharpLSP for rename, codeAction, call/type hierarchy and unitycsharp.* commands. Use this skill when configuring a lightweight C# language server or MCP server, registering it with Claude Code or OpenCode, querying symbol definitions or references, extracting document outlines, calling MCP tools, or integrating with Unity project codebases. Also use it when asked which prefabs, scenes or assets use a script or asset, whether an asset is still used, or what a `guid:` in Unity YAML points to (MCP tools unity_guid_references / unity_guid_definition), and before renaming, moving or deleting a MonoBehaviour, ScriptableObject or asset.
 ---
 
 # UnityCSharpFastLSP — LLM & AI Agent Usage Guide
@@ -62,6 +62,8 @@ UnityCSharpFastLSP.Server.exe --print-config
 | **Semantic Highlighting** | `textDocument/semanticTokens/full` | High-speed delta-encoded semantic coloring for types, members, and keywords. |
 | **Document Highlight** | `textDocument/documentHighlight` | Highlights all occurrences of the identifier under cursor. |
 | **Syntax Diagnostics** | `textDocument/publishDiagnostics` | Live syntax checking with sub-millisecond incremental updates during typing. |
+| **Where is a script/asset used in scenes & prefabs** | `unitylsp/guidReferences` (MCP `unity_guid_references`) | Pass the script or asset path; the `.meta` GUID is resolved for you. Returns each scene/prefab/asset line with the owning YAML object. |
+| **What does a GUID point to** | `unitylsp/guidDefinition` (MCP `unity_guid_definition`) | GUID (or asset path) → `.meta` and asset. |
 
 ---
 
@@ -143,8 +145,11 @@ Rename, codeAction, and formatting tools return a `WorkspaceEdit` or `TextEdit[]
 
 1. `workspace_symbol` to find the symbol and its location.
 2. `textDocument_definition` or `textDocument_references` at that position.
-3. Edit files with your own tools.
-4. After a bulk edit, call `lsp_reset` to reload the workspace (proxy mode reloads UnityCSharpLSP too).
+3. If the change renames, moves or deletes a MonoBehaviour / ScriptableObject class, its script file, or any asset, call `unity_guid_references` with `{"asset":"<that file>"}` first. C# references do not show the scenes, prefabs and assets that use it; this tool does.
+4. Edit files with your own tools.
+5. After a bulk edit, call `lsp_reset` to reload the workspace (proxy mode reloads UnityCSharpLSP too).
+
+Use `unity_guid_references` rather than reading the `.meta` and grepping for the GUID yourself: it is one call, accepts the script path directly, skips binary assets, and reports which YAML object (`classId` / `objectFileId`, e.g. 114 = MonoBehaviour) holds each reference.
 
 ### 5.5 Errors and fallback
 

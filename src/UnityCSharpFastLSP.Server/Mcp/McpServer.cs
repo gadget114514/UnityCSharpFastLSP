@@ -303,8 +303,9 @@ public sealed class McpServer : IDisposable
                 "Standalone mode answers only the fast LSP methods; run with --mcp --proxy (optionally --upstream-kind) " +
                 "to fall back to an upstream LSP server " +
                 "for rename, codeAction and other heavy methods. " +
-                "unity_guid_definition / unity_guid_references resolve Unity asset GUIDs (.meta) and find the scenes, " +
-                "prefabs and other assets that reference a GUID or an asset path (e.g. a MonoBehaviour script).",
+                "To find which scenes, prefabs or assets use a script or asset (e.g. before renaming or deleting a MonoBehaviour), " +
+                "call unity_guid_references with {\"asset\":\"Assets/Scripts/Player.cs\"} instead of grepping .meta GUIDs; " +
+                "to find what a 'guid: ...' in YAML points to, call unity_guid_definition.",
         };
     }
 

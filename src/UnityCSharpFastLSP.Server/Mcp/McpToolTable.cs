@@ -159,16 +159,30 @@ public static class McpToolTable
             Obj(F("uri", Str("file:/// URI, absolute path, or workspace-relative path")))),
 
         // ---- 追加: Unity GUID（FastLSP 独自メソッド unitylsp/*） ----
+        // 説明文は UnityCSharpLSP の同名ツールと同一（LLM がユーザーの質問から選べるよう、用途から書き始める）
         new McpTool("unity_guid_definition", LspServer.GuidDefinitionMethod, McpToolKind.LspRequest, true,
-            "Resolve a Unity asset GUID to its .meta file and asset. Pass 'guid' (32 hex chars) or 'asset' " +
-            "(path of an asset, script or .meta; file:/// URI, absolute, or workspace-relative). Returns {guid, assetUri, meta: Location} or null.",
-            GuidSchema(withMax: false)),
+            GuidDefinitionDescription, GuidSchema(withMax: false)),
         new McpTool("unity_guid_references", LspServer.GuidReferencesMethod, McpToolKind.LspRequest, true,
-            "Find the scenes, prefabs, materials, ScriptableObjects, .meta and .asmdef/.asmref files that reference a Unity asset GUID. " +
-            "Pass 'guid' or 'asset' (e.g. 'Assets/Scripts/Player.cs' to find where the MonoBehaviour is attached). " +
-            "Each reference has uri, 0-based range, lineText, and for YAML the owning object's classId/objectFileId and the reference fileId.",
-            GuidSchema(withMax: true)),
+            GuidReferencesDescription, GuidSchema(withMax: true)),
     ];
+
+    private const string GuidReferencesDescription =
+        "Find where a script or asset is used in the Unity project: the scenes, prefabs, materials, ScriptableObject .asset files, " +
+        "animator controllers and .asmdef/.asmref files that reference it. " +
+        "Use this when asked 'which prefab/scene uses X?' or 'is X still used?', and before renaming, moving or deleting " +
+        "a MonoBehaviour/ScriptableObject script or any asset. " +
+        "Pass 'asset' (e.g. 'Assets/Scripts/Player.cs'; its .meta GUID is resolved for you) or 'guid' (32 hex chars). " +
+        "One call replaces reading the .meta and grepping YAML, and each hit also says which object holds the reference: " +
+        "uri, 0-based range, lineText, YAML classId/objectFileId (e.g. classId 114 = MonoBehaviour component) and the reference fileId. " +
+        "Optional includePatterns/excludePatterns globs relative to the project root (e.g. [\"Assets/Scenes/**\"], [\"*.meta\"]) choose the files scanned; " +
+        "includePatterns replaces the default asset extensions, so \"*.cs\" can be searched too. " +
+        "For C# symbol references in code use textDocument_references instead.";
+
+    private const string GuidDefinitionDescription =
+        "Find which asset a Unity GUID points to. Use this when a scene, prefab, material or .asmdef shows 'guid: ...' (or \"GUID:...\") " +
+        "and you need the script or asset behind it, or to get an asset's GUID from its path. " +
+        "Pass 'guid' (32 hex chars) or 'asset' (asset, script or .meta path; file:/// URI, absolute, or workspace-relative). " +
+        "Returns {guid, assetUri, meta: Location of the guid line in the .meta file}, or null when not found.";
 
     private static JsonObject GuidSchema(bool withMax)
     {

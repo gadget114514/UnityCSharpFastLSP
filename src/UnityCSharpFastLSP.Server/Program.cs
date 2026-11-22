@@ -107,6 +107,12 @@ LLM / AI AGENT GUIDE (MCP):
     - rename, codeAction, type/call hierarchy, compiler diagnostics, unitycsharp.*
       commands (asset / GUID search): use --mcp --proxy. This needs an upstream LSP server.
       Upstream lookup order: --upstream / --upstream-kind, kind-specific env var, PATH, standard dirs.
+  Unity asset usages (both modes):
+    - ""Which prefab/scene uses this script?"", ""Is this asset still used?"", or before renaming,
+      moving or deleting a MonoBehaviour / ScriptableObject / asset:
+      unity_guid_references {""asset"":""Assets/Scripts/Player.cs""}. Do not grep .meta GUIDs by hand.
+      Narrow with includePatterns / excludePatterns, e.g. {""includePatterns"":[""Assets/Scenes/**""]}.
+    - What does a 'guid: ...' line in a prefab/scene point to: unity_guid_definition {""guid"":""<32 hex>""}.
   Calling tools:
     - Tool name = LSP method with '/' replaced by '_' (textDocument_definition).
     - Arguments are the LSP params object. Positions are 0-based (line, UTF-16 character).
