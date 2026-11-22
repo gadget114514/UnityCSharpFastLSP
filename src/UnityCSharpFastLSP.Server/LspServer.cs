@@ -26,6 +26,15 @@ public sealed class LspServer
 
     public ServerState State => _state;
 
+    /// <summary>
+    /// 以降の応答をクライアントへ書かずに捕捉する。プロキシが FastLSP の結果を検査し、
+    /// 空なら Upstream へ委譲するために使う。
+    /// </summary>
+    public void BeginCapture() => _writer.BeginCapture();
+
+    /// <summary>捕捉を終了し、捕捉したメッセージ本文を返す。</summary>
+    public List<byte[]> EndCapture() => _writer.EndCapture();
+
     public bool HandleMessage(byte[] message)
     {
         JsonDocument doc;
@@ -234,7 +243,7 @@ public sealed class LspServer
                 RenameProvider: _isProxy ? true : null,
                 CodeActionProvider: _isProxy ? true : null
             ),
-            ServerInfo: new ServerInfo("UnityCSharpFastLSP", "0.3.0")
+            ServerInfo: new ServerInfo("UnityCSharpFastLSP", "0.3.1")
         );
 
         _writer.WriteResponse(id, result, LspJsonSerializerContext.Default.InitializeResult);

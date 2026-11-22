@@ -17,6 +17,7 @@ UnityCSharpFastLSP を **MCP (Model Context Protocol) サーバー** として�
 
 - 読み取り中心（定義・参照・シンボル・hover）ならスタンドアロンで十分です。起動が軽く、常に即答します。
 - rename・codeAction・型階層/呼び出し階層・コンパイラ診断・`unitycsharp.*` コマンド（アセット・GUID 検索）が必要なら `--proxy` を付けてください。UnityCSharpLSP の実行ファイルが別途必要です。
+- **空結果フォールバック（v0.3.1+、プロキシ時）**: 高速メソッドの結果が空（`null` / `[]` / `{}` / `""`）の場合は、FastLSP の応答を破棄し、同じリクエストを UnityCSharpLSP に再委譲します。非空の結果は従来どおり FastLSP が即答するため、高速パスのレイテンシは変わりません。Upstream が未起動・起動失敗・終了済みのときは再委譲せず、空結果をそのまま返します。
 - ルーティングの判定は `LspProxy.FastMethods`（`src/UnityCSharpFastLSP.Server/LspProxy.cs`）に一任しており、MCP 層では独自判定していません。
 
 ---

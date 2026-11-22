@@ -24,7 +24,7 @@ public sealed record McpServerOptions(
 public sealed class McpServer : IDisposable
 {
     private const string ServerName = "unity-csharp-fast-lsp";
-    private const string ServerVersion = "0.3.0";
+    private const string ServerVersion = "0.3.1";
     private const string DefaultProtocolVersion = "2025-06-18";
     private const string StandaloneHint =
         " (not supported by UnityCSharpFastLSP standalone; run with --mcp --proxy to fall back to UnityCSharpLSP)";

@@ -193,6 +193,7 @@ Generate the snippet with your resolved binary path: `UnityCSharpFastLSP.Server.
 
 Which tools run where (details and known limitations in [doc/mcp.md](doc/mcp.md)):
 - **FastLSP (standalone and proxy)**: `hover`, `definition`, `declaration`, `typeDefinition`, `implementation`, `references`, `documentSymbol`, `documentHighlight`, `signatureHelp`, `completion`, `workspace_symbol`, `textDocument_formatting`.
+- **Empty-result fallback (proxy only, v0.3.1+)**: when a FastLSP fast-path request returns an empty result (`null`, `[]`, `{}`, or `""`), the proxy discards it and re-issues the request to UnityCSharpLSP. Non-empty fast results are still answered locally in **0.1–0.4 ms**.
 - **Standalone returns error `-32601`** (with a hint to use `--proxy`): everything else, including rename and codeAction.
 - **UnityCSharpLSP via proxy**: everything not in the FastLSP list above.
 
@@ -208,6 +209,7 @@ OPTIONS:
   --stdio              Use standard input/output for LSP JSON-RPC communication (default: true).
   --proxy              Enable Intelligent Hybrid Proxy mode.
                        - Supported features are answered immediately by FastLSP (<0.3ms).
+                       - Empty FastLSP results (null / [] / {} / "") are retried on upstream.
                        - Unhandled heavy requests are forwarded to upstream Roslyn server.
                        - Upstream discovery: 1) --upstream, 2) UNITY_CSHARP_LSP_PATH,
                          3) OS PATH resolution, 4) Standard directories. (5: Fails with error).
@@ -226,6 +228,7 @@ OPTIONS:
 ### Intelligent Hybrid Proxy Priority
 1. **Request Processing**:
    - **Fast Path (Local Answer)**: All features supported by FastLSP (`completion`, `hover`, `definition`, `declaration`, `implementation`, `references`, `formatting`, `signatureHelp`, `semanticTokens`, `documentSymbol`, `workspace/symbol`) are answered directly in **0.1ms – 0.4ms**.
+   - **Empty-Result Fallback (v0.3.1+)**: If a FastLSP fast-path response is empty (`null`, `[]`, `{}`, or `""`), the proxy drops it and forwards the same request to upstream Roslyn, so the client still gets a full result. Non-empty responses never touch upstream, preserving the fast path.
    - **Heavy Path (Upstream Forward)**: Heavy operations (`rename`, `codeAction`, compiler diagnostics `CS0029`/`CS0103`) are forwarded to upstream Roslyn.
 2. **Upstream Server Discovery Order**:
    1. Explicit path: `--upstream <path>`

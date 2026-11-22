@@ -102,9 +102,10 @@ public sealed class LspProxy : IDisposable
         }
 
         // 2. FastLSP が得意とする超高速リクエスト (0.15ms)
+        //    ただし結果が空 (null / [] / {} / "") の場合は Upstream に委譲する。
         if (FastMethods.Contains(method))
         {
-            return _fastServer.HandleMessage(message);
+            return HandleFastRequest(message);
         }
 
         // 3. initialize / initialized / shutdown / exit
@@ -129,6 +130,117 @@ public sealed class LspProxy : IDisposable
         // Upstream (UnityCSharpLSP) に委譲
         ForwardToUpstream(message);
         return true;
+    }
+
+    /// <summary>
+    /// FastLSP に処理させつつ応答を捕捉し、結果が空なら Upstream (UnityCSharpLSP) に委譲する。
+    /// 非空なら捕捉した応答をクライアントへ返すので、通常の高速パスのレイテンシは変わらない。
+    /// </summary>
+    private bool HandleFastRequest(byte[] message)
+    {
+        _fastServer.BeginCapture();
+        bool result;
+        List<byte[]> captured;
+        try
+        {
+            result = _fastServer.HandleMessage(message);
+        }
+        finally
+        {
+            captured = _fastServer.EndCapture();
+        }
+
+        byte[]? response = null;
+        foreach (byte[] body in captured)
+        {
+            if (HasMethod(body))
+            {
+                // 通知やサーバー発リクエストはそのままクライアントへ流す。
+                WriteToClient(body);
+            }
+            else
+            {
+                // 1 リクエストにつき応答は 1 つ。最後のものを採用する。
+                response = body;
+            }
+        }
+
+        if (response == null)
+        {
+            return result;
+        }
+
+        if (IsEmptyResult(response) && CanFallbackToUpstream())
+        {
+            // FastLSP の空応答は捨て、Upstream に同じ id で転送する。
+            // Upstream の応答は ReadUpstreamLoop がクライアントへ透過転送する。
+            ForwardToUpstream(message);
+            return true;
+        }
+
+        WriteToClient(response);
+        return result;
+    }
+
+    /// <summary>Upstream が起動済みで、まだ生存しているか（フォールバック可能か）。</summary>
+    private bool CanFallbackToUpstream()
+    {
+        return _upstreamReady && _upstreamStartError == null
+            && _upstreamProcess != null && !_upstreamProcess.HasExited;
+    }
+
+    private void WriteToClient(byte[] body)
+    {
+        byte[] frame = LspMessageWriter.Frame(body);
+        lock (_clientOutput)
+        {
+            _clientOutput.Write(frame, 0, frame.Length);
+            _clientOutput.Flush();
+        }
+    }
+
+    /// <summary>サーバー → クライアントの通知 / リクエスト（"method" を持つ）か。</summary>
+    private static bool HasMethod(byte[] body)
+    {
+        try
+        {
+            using JsonDocument doc = JsonDocument.Parse(body);
+            return doc.RootElement.TryGetProperty("method", out _);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 応答の result が空（null / 空文字 / 空配列 / 空オブジェクト）か。
+    /// エラー応答はフォールバック対象外として false を返す。
+    /// </summary>
+    private static bool IsEmptyResult(byte[] body)
+    {
+        try
+        {
+            using JsonDocument doc = JsonDocument.Parse(body);
+            JsonElement root = doc.RootElement;
+
+            if (root.TryGetProperty("error", out _)) return false;
+
+            if (!root.TryGetProperty("result", out JsonElement result)) return true;
+
+            return result.ValueKind switch
+            {
+                JsonValueKind.Null => true,
+                JsonValueKind.String => string.IsNullOrEmpty(result.GetString()),
+                JsonValueKind.Array => result.GetArrayLength() == 0,
+                JsonValueKind.Object => !result.EnumerateObject().Any(),
+                _ => false
+            };
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     private void ForwardToUpstream(byte[] message)

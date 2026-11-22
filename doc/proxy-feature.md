@@ -1,6 +1,6 @@
 # Intelligent Hybrid Proxy Specification
 
-**Applies to**: `UnityCSharpFastLSP` v0.2.1+  
+**Applies to**: `UnityCSharpFastLSP` v0.3.1+  
 **Executable**: `UnityCSharpFastLSP.Server.exe --proxy [options]`
 
 UnityCSharpFastLSP provides an **Intelligent Hybrid Proxy mode** (`--proxy`) designed to deliver the ultimate C# editing experience for Unity developers:
@@ -40,6 +40,15 @@ The following table details how every LSP method is handled in **Proxy Mode** (`
 | `textDocument/rename` | Forwarded to Upstream Roslyn | **Upstream (Roslyn)** | `renameProvider: true` | Heavy semantic refactoring |
 | `textDocument/codeAction` | Forwarded to Upstream Roslyn | **Upstream (Roslyn)** | `codeActionProvider: true` | Roslyn analyzers & quick fixes |
 
+### 1.1 Empty-Result Fallback (v0.3.1+)
+
+FastLSP answers the fast-path methods above, but when its result is empty (`null`, `[]`, `{}`, or `""`), the proxy treats it as "not resolved locally" and transparently re-issues the same request (same JSON-RPC `id`) to the upstream Roslyn server. The empty FastLSP response is discarded, and the upstream response is forwarded to the client.
+
+- Applies only in `--proxy` mode, and only while the upstream is started and alive.
+- Non-empty FastLSP responses are never forwarded, so the sub-millisecond fast path is unchanged.
+- Error responses are not retried; only empty successful results trigger the fallback.
+- In `--mcp --proxy` mode the same behavior applies through `LspProxy`, and the MCP tool call waits for the upstream response.
+
 ---
 
 ## 2. Architecture & Request Flow
@@ -63,7 +72,13 @@ sequenceDiagram
 
     Note over Client,FastLSP: Phase 2: Interactive Requests (Fast Path)
     Client->>FastLSP: textDocument/completion, definition, hover, references
-    FastLSP-->>Client: Instant response (< 0.3 ms directly from In-Memory CST/Index)
+    alt Non-empty FastLSP result
+        FastLSP-->>Client: Instant response (< 0.3 ms)
+    else Empty result (null / [] / {} / "")
+        FastLSP->>Upstream: Re-issue request (same id)
+        Upstream-->>FastLSP: Full Roslyn result
+        FastLSP-->>Client: Forward upstream result
+    end
 
     Note over Client,Upstream: Phase 3: Heavy Refactorings (Delegated Path)
     Client->>FastLSP: textDocument/rename, codeAction
@@ -145,6 +160,7 @@ To completely eliminate the 800 ms 〜 1500 ms cold startup delay of Roslyn from
 MCP サーバーとして起動する場合（`UnityCSharpFastLSP.Server.exe --mcp --proxy [--upstream <path>]`）も、同じ `LspProxy` を経由します。
 
 - MCP ツールのうち、§1 の FastLSP 応答メソッド（completion・hover・definition・references など）は FastLSP が即答します。
+- FastLSP の結果が空（`null` / `[]` / `{}` / `""`）の場合、§1.1 のとおり同じリクエストを UnityCSharpLSP に再委譲し、その応答を MCP ツール結果として返します。
 - それ以外（rename・codeAction・型階層・コンパイラ診断・`unitycsharp.*` コマンドなど）は UnityCSharpLSP に委譲されます。
 - ルーティングは `LspProxy.FastMethods` の判定に一任しており、MCP 層では独自判定しません。
 - `--mcp` のみ（`--proxy` なし）の場合は、委譲せず LSP エラー `-32601` を返します。
