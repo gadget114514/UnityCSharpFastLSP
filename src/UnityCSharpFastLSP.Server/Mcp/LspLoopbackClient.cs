@@ -27,12 +27,12 @@ public sealed class LspLoopbackClient : IDisposable
     private readonly ConcurrentDictionary<string, JsonNode> _diagnostics = new(StringComparer.OrdinalIgnoreCase);
     private long _nextId;
 
-    private LspLoopbackClient(string? upstreamPath, bool proxy)
+    private LspLoopbackClient(string? upstreamPath, bool proxy, UpstreamKind upstreamKind = UpstreamKind.Auto, string? workspacePath = null)
     {
         _sink = new FrameSinkStream(OnServerMessage);
         if (proxy)
         {
-            _proxy = new LspProxy(_sink, upstreamPath);
+            _proxy = new LspProxy(_sink, upstreamPath, upstreamKind, workspacePath);
             _send = _proxy.HandleClientMessage;
         }
         else
@@ -45,8 +45,11 @@ public sealed class LspLoopbackClient : IDisposable
     /// <summary>FastLSP 単体（未対応メソッドは -32601）。</summary>
     public static LspLoopbackClient CreateStandalone() => new(null, proxy: false);
 
-    /// <summary>プロキシ構成（FastLSP 非対応メソッドは UnityCSharpLSP にフォールバック）。</summary>
-    public static LspLoopbackClient CreateProxy(string? upstreamPath) => new(upstreamPath, proxy: true);
+    /// <summary>プロキシ構成（FastLSP 非対応メソッドは選択された upstream にフォールバック）。</summary>
+    public static LspLoopbackClient CreateProxy(
+        string? upstreamPath,
+        UpstreamKind upstreamKind = UpstreamKind.Auto,
+        string? workspacePath = null) => new(upstreamPath, proxy: true, upstreamKind, workspacePath);
 
     public bool IsProxy => _proxy != null;
 

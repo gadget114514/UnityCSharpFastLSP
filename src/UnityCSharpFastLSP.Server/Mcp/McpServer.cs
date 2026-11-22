@@ -13,7 +13,9 @@ public sealed record McpServerOptions(
     bool Proxy,
     string? UpstreamPath,
     JsonNode? Settings,          // --settings の JSON（null 可）
-    TimeSpan Timeout);           // 既定 120 秒
+    TimeSpan Timeout,            // 既定 120 秒
+    UpstreamKind UpstreamKind = UpstreamKind.Auto,
+    string? UpstreamWorkspace = null); // upstream の作業ディレクトリ（既定: MCP の workspace root）
 
 /// <summary>
 /// MCP クライアント（Claude Code 等）と <see cref="LspLoopbackClient"/> の間に立つ stdio サーバー。
@@ -27,7 +29,7 @@ public sealed class McpServer : IDisposable
     private const string ServerVersion = "0.3.1";
     private const string DefaultProtocolVersion = "2025-06-18";
     private const string StandaloneHint =
-        " (not supported by UnityCSharpFastLSP standalone; run with --mcp --proxy to fall back to UnityCSharpLSP)";
+        " (not supported by UnityCSharpFastLSP standalone; run with --mcp --proxy to fall back to an upstream LSP server)";
 
     private static readonly string[] SupportedProtocolVersions = ["2024-11-05", "2025-03-26", "2025-06-18"];
     private static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(5);
@@ -57,7 +59,10 @@ public sealed class McpServer : IDisposable
         _output = output;
         _client = client
             ?? (options.Proxy
-                ? LspLoopbackClient.CreateProxy(options.UpstreamPath)
+                ? LspLoopbackClient.CreateProxy(
+                    options.UpstreamPath,
+                    options.UpstreamKind,
+                    options.UpstreamWorkspace ?? options.WorkspaceRoot)
                 : LspLoopbackClient.CreateStandalone());
         _sync = new DocumentSyncTracker(_client, _client.IsProxy);
     }
@@ -295,7 +300,8 @@ public sealed class McpServer : IDisposable
                 "Arguments are the LSP params object; results are the LSP result JSON. " +
                 "Positions are 0-based (line, UTF-16 character). " +
                 "textDocument.uri may be a file:/// URI, an absolute path, or a workspace-relative path. " +
-                "Standalone mode answers only the fast LSP methods; run with --mcp --proxy to fall back to UnityCSharpLSP " +
+                "Standalone mode answers only the fast LSP methods; run with --mcp --proxy (optionally --upstream-kind) " +
+                "to fall back to an upstream LSP server " +
                 "for rename, codeAction and other heavy methods.",
         };
     }

@@ -12,12 +12,12 @@ UnityCSharpFastLSP を **MCP (Model Context Protocol) サーバー** として�
 
 | モード | 起動 | 応答するツール | それ以外のツール |
 | :--- | :--- | :--- | :--- |
-| **スタンドアロン** | `--mcp` | 高速メソッド 12 種（後述 §4） | LSP エラー `-32601` を `isError: true` で返す。メッセージに「`--mcp --proxy` で UnityCSharpLSP にフォールバックできる」旨を付与 |
-| **プロキシ（フォールバック）** | `--mcp --proxy [--upstream <path>]` | 高速メソッド 12 種は FastLSP が応答 | 残りはすべて **UnityCSharpLSP（Roslyn）** に委譲 |
+| **スタンドアロン** | `--mcp` | 高速メソッド 12 種（後述 §4） | LSP エラー `-32601` を `isError: true` で返す。メッセージに「`--mcp --proxy` で upstream にフォールバックできる」旨を付与 |
+| **プロキシ（フォールバック）** | `--mcp --proxy [--upstream-kind <k>] [--upstream <path>]` | 高速メソッド 12 種は FastLSP が応答 | 残りはすべて選択された **upstream LSP サーバー**（UnityCSharpLSP / csharp-ls / OmniSharp）に委譲 |
 
 - 読み取り中心（定義・参照・シンボル・hover）ならスタンドアロンで十分です。起動が軽く、常に即答します。
-- rename・codeAction・型階層/呼び出し階層・コンパイラ診断・`unitycsharp.*` コマンド（アセット・GUID 検索）が必要なら `--proxy` を付けてください。UnityCSharpLSP の実行ファイルが別途必要です。
-- **空結果フォールバック（v0.3.1+、プロキシ時）**: 高速メソッドの結果が空（`null` / `[]` / `{}` / `""`）の場合は、FastLSP の応答を破棄し、同じリクエストを UnityCSharpLSP に再委譲します。非空の結果は従来どおり FastLSP が即答するため、高速パスのレイテンシは変わりません。Upstream が未起動・起動失敗・終了済みのときは再委譲せず、空結果をそのまま返します。
+- rename・codeAction・型階層/呼び出し階層・コンパイラ診断・`unitycsharp.*` コマンド（アセット・GUID 検索）が必要なら `--proxy` を付けてください。upstream LSP の実行ファイルが別途必要です（`unitycsharp.*` は UnityCSharpLSP 固有）。
+- **空結果フォールバック（v0.3.1+、プロキシ時）**: 高速メソッドの結果が空（`null` / `[]` / `{}` / `""`）の場合は、FastLSP の応答を破棄し、同じリクエストを選択された upstream に再委譲します。非空の結果は従来どおり FastLSP が即答するため、高速パスのレイテンシは変わりません。Upstream が未起動・起動失敗・終了済みのときは再委譲せず、空結果をそのまま返します。
 - ルーティングの判定は `LspProxy.FastMethods`（`src/UnityCSharpFastLSP.Server/LspProxy.cs`）に一任しており、MCP 層では独自判定していません。
 
 ---
@@ -27,14 +27,15 @@ UnityCSharpFastLSP を **MCP (Model Context Protocol) サーバー** として�
 | オプション | 既定値 | 説明 |
 | :--- | :--- | :--- |
 | `--mcp` | — | MCP サーバーとして stdio で起動する（stdout は MCP 専用、ログは stderr）。 |
-| `--proxy` | 無効 | UnityCSharpLSP へのフォールバックを有効にする。`--upstream` を指定すると自動で有効になる。 |
-| `--upstream <path>` | 探索 | UnityCSharpLSP の実行ファイルを明示する。 |
-| `--workspace <path>` | カレントディレクトリから上方探索 | ワークスペースのルート。省略時はカレントディレクトリから上に辿り、`Assets/` か `ProjectSettings/` を持つ最も近い祖先。どちらも無ければカレントディレクトリ。 |
+| `--proxy` | 無効 | upstream へのフォールバックを有効にする。`--upstream` / `--upstream-kind` を指定すると自動で有効になる。 |
+| `--upstream-kind <k>` | `auto` | フォールバック先を選択: `auto` / `unitycsharp` / `csharp-ls` / `omnisharp`。`auto` は UnityCSharpLSP → csharp-ls → OmniSharp の順に起動できるものを試す。 |
+| `--upstream <path>` | 探索 | upstream の実行ファイルを明示する（ファイル名から種別を推定）。 |
+| `--workspace <path>` | カレントディレクトリから上方探索 | ワークスペースのルート＋upstream の作業ディレクトリ（OmniSharp には `-s` としても渡る）。省略時はカレントディレクトリから上に辿り、`Assets/` か `ProjectSettings/` を持つ最も近い祖先。どちらも無ければカレントディレクトリ。 |
 | `--settings <json>` | なし | 起動時に `workspace/didChangeConfiguration` で送る設定。`@<file>` でファイルから読む。**プロキシモードでのみ効果がある**（§6 参照）。 |
 | `--timeout <sec>` | `120` | 1 リクエストあたりのタイムアウト（秒、正の整数）。 |
 | `--print-config --mcp [--proxy] [--workspace <path>] [--upstream <path>]` | — | MCP クライアント用の `mcpServers` 設定スニペットを出力して終了する。 |
 
-upstream の探索順（`--proxy` 時）: `--upstream` → 環境変数 `UNITY_CSHARP_LSP_PATH` → PATH 上の `UnityCSharpLSP.Server.exe` / `UnityCSharpLSP.exe` など → 標準インストール先（`%LOCALAPPDATA%\Programs\UnityCSharpLSP\UnityCSharpLSP.Server.exe` など）。どれも起動できなければ、そのリクエストに upstream 起動失敗の理由（`--upstream` か `UNITY_CSHARP_LSP_PATH` を設定する旨）を返します。
+upstream の探索順（`--proxy` 時）: 各プロバイダーについて `--upstream` → 種別ごとの環境変数（`UNITY_CSHARP_LSP_PATH` / `CSHARP_LS_PATH` / `OMNISHARP_PATH`）→ PATH 上の `UnityCSharpLSP.Server.exe` / `csharp-ls` / `omnisharp` など → 標準インストール先（`%LOCALAPPDATA%\Programs\...`、`~/.dotnet/tools` など）。`auto` ではプロバイダーを順に試し、どれも起動できなければそのリクエストに upstream 起動失敗の理由（`--upstream` / `--upstream-kind` か環境変数を設定する旨）を返します。起動引数はプロバイダーごとに異なります（UnityCSharpLSP: `--stdio`、csharp-ls: なし、OmniSharp: `-lsp [-s <workspace>]`）。
 
 ---
 
@@ -66,7 +67,7 @@ UnityCSharpFastLSP.Server.exe --print-config --mcp --proxy --workspace D:/MyUnit
 # スタンドアロン
 claude mcp add unity-csharp-fast-lsp -- <path/to/UnityCSharpFastLSP.Server.exe> --mcp --workspace <path>
 
-# プロキシ（UnityCSharpLSP にフォールバック）
+# プロキシ（upstream LSP にフォールバック。--upstream-kind で選択）
 claude mcp add unity-csharp-fast-lsp -- <path/to/UnityCSharpFastLSP.Server.exe> --mcp --proxy --workspace <path>
 ```
 
@@ -109,7 +110,7 @@ claude mcp add unity-csharp-fast-lsp -- <path/to/UnityCSharpFastLSP.Server.exe> 
 
 「スタンドアロン」「プロキシ」列の意味:
 - **FastLSP**: この実装が直接応答する。
-- **UnityCSharpLSP**: `--proxy` 時に委譲される。
+- **upstream**: `--proxy` 時に委譲される（`--upstream-kind` で UnityCSharpLSP / csharp-ls / OmniSharp を選択）。下の表の「UnityCSharpLSP」列は委譲先を指す。
 - **−32601**: スタンドアロンでは未対応（`isError` で返る）。
 
 ### 4.1 読み取り系（`readOnlyHint: true`）
@@ -208,9 +209,9 @@ MCP クライアント（LLM エージェント）は LSP クライアントの�
 
 | 状況 | `code` | `message` の例 |
 | :--- | :---: | :--- |
-| スタンドアロンで未対応のメソッド | -32601 | `Method not found: textDocument/rename (not supported by UnityCSharpFastLSP standalone; run with --mcp --proxy to fall back to UnityCSharpLSP)` |
-| プロキシで upstream が起動できない | -32603 | `Upstream Roslyn LSP server could not be started.` で始まる理由（`--upstream` か `UNITY_CSHARP_LSP_PATH` を設定する） |
-| upstream が起動後に終了した | -32603 | `Upstream UnityCSharpLSP exited (code N).` |
+| スタンドアロンで未対応のメソッド | -32601 | `Method not found: textDocument/rename (not supported by UnityCSharpFastLSP standalone; run with --mcp --proxy to fall back to an upstream LSP server)` |
+| プロキシで upstream が起動できない | -32603 | `No upstream LSP server could be started.` で始まる理由（`--upstream` / `--upstream-kind` か環境変数を設定する） |
+| upstream が起動後に終了した | -32603 | `Upstream <選択したプロバイダー名> exited (code N).` |
 
 ### 6.2 既知の制限（実装から確認できる差分）
 

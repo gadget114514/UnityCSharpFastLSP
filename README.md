@@ -154,7 +154,7 @@ Besides the LSP server mode above, FastLSP can run as an **MCP (Model Context Pr
 | :--- | :--- |
 | **LSP** (`--stdio`, default) | Your editor or agent client speaks LSP natively (e.g. OpenCode `lsp` setting). |
 | **MCP standalone** (`--mcp`) | Read-only navigation is enough: definition, references, symbols, hover, completion, document symbols. Fastest, no upstream needed. |
-| **MCP proxy** (`--mcp --proxy`) | You also need rename, codeAction, type/call hierarchy, compiler diagnostics, or `unitycsharp.*` commands. Requires UnityCSharpLSP installed. |
+| **MCP proxy** (`--mcp --proxy`) | You also need rename, codeAction, type/call hierarchy, compiler diagnostics, or `unitycsharp.*` commands. Requires an upstream LSP server (UnityCSharpLSP, csharp-ls or OmniSharp). |
 
 Setup examples (replace `<exe>` and `<path>`):
 
@@ -193,9 +193,9 @@ Generate the snippet with your resolved binary path: `UnityCSharpFastLSP.Server.
 
 Which tools run where (details and known limitations in [doc/mcp.md](doc/mcp.md)):
 - **FastLSP (standalone and proxy)**: `hover`, `definition`, `declaration`, `typeDefinition`, `implementation`, `references`, `documentSymbol`, `documentHighlight`, `signatureHelp`, `completion`, `workspace_symbol`, `textDocument_formatting`.
-- **Empty-result fallback (proxy only, v0.3.1+)**: when a FastLSP fast-path request returns an empty result (`null`, `[]`, `{}`, or `""`), the proxy discards it and re-issues the request to UnityCSharpLSP. Non-empty fast results are still answered locally in **0.1–0.4 ms**.
+- **Empty-result fallback (proxy only, v0.3.1+)**: when a FastLSP fast-path request returns an empty result (`null`, `[]`, `{}`, or `""`), the proxy discards it and re-issues the request to the upstream server. Non-empty fast results are still answered locally in **0.1–0.4 ms**.
 - **Standalone returns error `-32601`** (with a hint to use `--proxy`): everything else, including rename and codeAction.
-- **UnityCSharpLSP via proxy**: everything not in the FastLSP list above.
+- **Upstream via proxy**: everything not in the FastLSP list above. Override the provider with `--upstream-kind csharp-ls` or `--upstream-kind omnisharp` (e.g. `--mcp --proxy --upstream-kind csharp-ls`).
 
 ---
 
@@ -210,13 +210,15 @@ OPTIONS:
   --proxy              Enable Intelligent Hybrid Proxy mode.
                        - Supported features are answered immediately by FastLSP (<0.3ms).
                        - Empty FastLSP results (null / [] / {} / "") are retried on upstream.
-                       - Unhandled heavy requests are forwarded to upstream Roslyn server.
-                       - Upstream discovery: 1) --upstream, 2) UNITY_CSHARP_LSP_PATH,
-                         3) OS PATH resolution, 4) Standard directories. (5: Fails with error).
-  --upstream <path>    Explicit path to upstream Roslyn LSP server (e.g. UnityCSharpLSP.Server.exe).
-                       If omitted with --proxy, automatically searches following priority 2 -> 3 -> 4.
+                       - Unhandled heavy requests are forwarded to the upstream LSP server.
+  --upstream-kind <k>  Fallback upstream: auto (default), unitycsharp, csharp-ls, omnisharp.
+                       'auto' tries UnityCSharpLSP -> csharp-ls -> OmniSharp until one starts.
+                       Per-server args: unitycsharp --stdio, csharp-ls (none), omnisharp -lsp [-s <workspace>].
+  --upstream <path>    Explicit path to the upstream LSP executable (e.g. UnityCSharpLSP.Server.exe,
+                       csharp-ls, OmniSharp.exe). Tried first; the kind is inferred from the file name.
   --mcp                Run as MCP (Model Context Protocol) server over stdio. See "Using with LLM Agents via MCP".
-  --workspace <path>   MCP mode: workspace root (default: nearest ancestor containing Assets/ or ProjectSettings/).
+  --workspace <path>   Upstream working directory (and OmniSharp -s). In MCP mode also the workspace root
+                       (default: nearest ancestor containing Assets/ or ProjectSettings/).
   --settings <json>    MCP mode: settings sent with workspace/didChangeConfiguration at startup
                        (effective with --proxy only; @<file> to read a file).
   --timeout <sec>      MCP mode: timeout for each LSP request in seconds (default: 120).
@@ -228,14 +230,12 @@ OPTIONS:
 ### Intelligent Hybrid Proxy Priority
 1. **Request Processing**:
    - **Fast Path (Local Answer)**: All features supported by FastLSP (`completion`, `hover`, `definition`, `declaration`, `implementation`, `references`, `formatting`, `signatureHelp`, `semanticTokens`, `documentSymbol`, `workspace/symbol`) are answered directly in **0.1ms – 0.4ms**.
-   - **Empty-Result Fallback (v0.3.1+)**: If a FastLSP fast-path response is empty (`null`, `[]`, `{}`, or `""`), the proxy drops it and forwards the same request to upstream Roslyn, so the client still gets a full result. Non-empty responses never touch upstream, preserving the fast path.
-   - **Heavy Path (Upstream Forward)**: Heavy operations (`rename`, `codeAction`, compiler diagnostics `CS0029`/`CS0103`) are forwarded to upstream Roslyn.
-2. **Upstream Server Discovery Order**:
-   1. Explicit path: `--upstream <path>`
-   2. Environment variable: `UNITY_CSHARP_LSP_PATH`
-   3. OS PATH resolution: OS searches PATH for `UnityCSharpLSP.Server.exe` or `UnityCSharpLSP.exe`
-   4. Standard installation directories (`%LOCALAPPDATA%\Programs\UnityCSharpLSP`, etc.)
-   5. **FAILED**: If no upstream server is found, terminates immediately with error code 1.
+   - **Empty-Result Fallback (v0.3.1+)**: If a FastLSP fast-path response is empty (`null`, `[]`, `{}`, or `""`), the proxy drops it and forwards the same request to the upstream server, so the client still gets a full result. Non-empty responses never touch upstream, preserving the fast path.
+   - **Heavy Path (Upstream Forward)**: Heavy operations (`rename`, `codeAction`, compiler diagnostics `CS0029`/`CS0103`) are forwarded to the upstream LSP server.
+2. **Upstream Server Selection & Discovery Order**:
+   - Select with `--upstream-kind <auto|unitycsharp|csharp-ls|omnisharp>`. `auto` (default) tries each provider in order until one starts; an explicit kind tries only that provider.
+   - For each provider: 1) explicit `--upstream <path>`, 2) kind-specific env var (`UNITY_CSHARP_LSP_PATH`, `CSHARP_LS_PATH`, `OMNISHARP_PATH`), 3) OS PATH (`UnityCSharpLSP.Server.exe`, `csharp-ls`, `omnisharp`, ...), 4) standard install dirs (`%LOCALAPPDATA%\Programs\...`, `~/.dotnet/tools`, ...).
+   - If no provider starts, FastLSP keeps answering fast methods; heavy / empty-result requests cannot fall back. This is non-fatal.
 
 ---
 

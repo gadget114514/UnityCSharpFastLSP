@@ -14,6 +14,9 @@ public sealed class LspProxy : IDisposable
     private Process? _upstreamProcess;
     private StreamWriter? _upstreamInput;
     private volatile bool _upstreamReady;
+    private readonly UpstreamKind _requestedKind;
+    private readonly string? _workspacePath;
+    private volatile UpstreamKind _upstreamKind;
 
     private static readonly HashSet<string> FastMethods = new(StringComparer.Ordinal)
     {
@@ -43,17 +46,27 @@ public sealed class LspProxy : IDisposable
             if (_upstreamStartError != null) return _upstreamStartError;
             var proc = _upstreamProcess;
             return _upstreamReady && proc != null && proc.HasExited
-                ? $"Upstream UnityCSharpLSP exited (code {proc.ExitCode})."
+                ? $"Upstream {UpstreamServerRegistry.DisplayName(_upstreamKind)} exited (code {proc.ExitCode})."
                 : null;
         }
     }
 
     private volatile string? _upstreamStartError;
 
-    public LspProxy(Stream clientOutput, string? upstreamExecutablePath = null)
+    /// <summary>実際に起動した upstream の種類（未起動なら要求された種類）。</summary>
+    public UpstreamKind SelectedKind => _upstreamReady ? _upstreamKind : _requestedKind;
+
+    public LspProxy(
+        Stream clientOutput,
+        string? upstreamExecutablePath = null,
+        UpstreamKind upstreamKind = UpstreamKind.Auto,
+        string? workspacePath = null)
     {
         _clientOutput = clientOutput;
         _fastServer = new LspServer(clientOutput, isProxy: true);
+        _requestedKind = upstreamKind;
+        _workspacePath = workspacePath;
+        _upstreamKind = upstreamKind;
 
         // バックグラウンドで Upstream を非同期起動 (メインスレッドおよび initialize を一切待たせない！)
         Task.Run(() => InitUpstreamBackground(upstreamExecutablePath, _cts.Token));
@@ -61,27 +74,43 @@ public sealed class LspProxy : IDisposable
 
     private void InitUpstreamBackground(string? upstreamExecutablePath, CancellationToken ct)
     {
-        try
+        var attempts = UpstreamServerRegistry.ResolveAttempts(_requestedKind, upstreamExecutablePath);
+        var failures = new List<string>();
+
+        foreach (UpstreamAttempt attempt in attempts)
         {
-            _upstreamProcess = StartUpstreamProcess(upstreamExecutablePath);
-            _upstreamInput = _upstreamProcess.StandardInput;
-            _upstreamReady = true;
-
-            // Upstream の出力を非同期に読み取りクライアントに転送
-            Task.Run(() => ReadUpstreamLoop(_upstreamProcess.StandardOutput.BaseStream, ct));
-            Task.Run(() => ReadUpstreamStderrLoop(_upstreamProcess.StandardError, ct));
-
-            // 起動前に蓄積されていた通知/リクエストを一気にフラッシュ転送
-            while (_pendingMessages.TryDequeue(out var msg))
+            try
             {
-                ForwardDirect(msg);
+                var proc = StartUpstreamProcess(attempt, _workspacePath);
+                _upstreamProcess = proc;
+                _upstreamInput = proc.StandardInput;
+                _upstreamKind = attempt.Kind;
+                _upstreamReady = true;
+
+                string name = UpstreamServerRegistry.DisplayName(attempt.Kind);
+                Console.Error.WriteLine($"[LspProxy] Upstream ready: {name} ({proc.StartInfo.FileName})");
+
+                // Upstream の出力を非同期に読み取りクライアントに転送
+                Task.Run(() => ReadUpstreamLoop(proc.StandardOutput.BaseStream, ct));
+                Task.Run(() => ReadUpstreamStderrLoop(name, proc.StandardError, ct));
+
+                // 起動前に蓄積されていた通知/リクエストを一気にフラッシュ転送
+                while (_pendingMessages.TryDequeue(out var msg))
+                {
+                    ForwardDirect(msg);
+                }
+                return;
+            }
+            catch (Exception ex)
+            {
+                string name = UpstreamServerRegistry.DisplayName(attempt.Kind);
+                Console.Error.WriteLine($"[LspProxy] Upstream {name} could not be started: {ex.Message}");
+                failures.Add($"{name}: {ex.Message}");
             }
         }
-        catch (Exception ex)
-        {
-            _upstreamStartError = ex.Message;
-            Console.Error.WriteLine($"[LspProxy] Failed to initialize upstream server in background: {ex.Message}");
-        }
+
+        _upstreamStartError = "No upstream LSP server could be started.\n" + string.Join("\n", failures);
+        Console.Error.WriteLine($"[LspProxy] Failed to initialize upstream server in background: {_upstreamStartError}");
     }
 
     public bool HandleClientMessage(byte[] message)
@@ -314,82 +343,57 @@ public sealed class LspProxy : IDisposable
         }
     }
 
-    private async Task ReadUpstreamStderrLoop(StreamReader stderr, CancellationToken ct)
+    private async Task ReadUpstreamStderrLoop(string name, StreamReader stderr, CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
         {
             string? line = await stderr.ReadLineAsync(ct);
             if (line == null) break;
-            Console.Error.WriteLine($"[Upstream Roslyn] {line}");
+            Console.Error.WriteLine($"[Upstream {name}] {line}");
         }
     }
 
-    private static Process StartUpstreamProcess(string? explicitPath)
+    private static Process StartUpstreamProcess(UpstreamAttempt attempt, string? workspacePath)
     {
-        var candidates = new List<string>();
+        string name = UpstreamServerRegistry.DisplayName(attempt.Kind);
+        string arguments = UpstreamServerRegistry.GetStartArguments(attempt.Kind, workspacePath);
+        var failures = new List<string>();
 
-        // 1. コマンドライン引数 (--upstream <path>)
-        if (!string.IsNullOrWhiteSpace(explicitPath))
-        {
-            candidates.Add(explicitPath);
-        }
-
-        // 2. 環境変数 UNITY_CSHARP_LSP_PATH
-        string env = Environment.GetEnvironmentVariable("UNITY_CSHARP_LSP_PATH") ?? "";
-        if (!string.IsNullOrWhiteSpace(env))
-        {
-            candidates.Add(env);
-        }
-
-        // 3. 実行ファイル名 (PATH探索はOSに任せる)
-        candidates.Add("UnityCSharpLSP.Server.exe");
-        candidates.Add("UnityCSharpLSP.exe");
-        candidates.Add("UnityCSharpLSP.Server");
-        candidates.Add("UnityCSharpLSP");
-
-        // 4. 標準インストール先ディレクトリのフォールバック
-        candidates.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Programs\UnityCSharpLSP\UnityCSharpLSP.Server.exe"));
-        // 開発機固有の固定パスは持たない。ビルド出力を使う場合は --upstream か UNITY_CSHARP_LSP_PATH で指定する。
-
-        foreach (var cmd in candidates)
+        foreach (string cmd in UpstreamServerRegistry.GetCandidateCommands(attempt))
         {
             try
             {
                 var psi = new ProcessStartInfo
                 {
                     FileName = cmd,
-                    Arguments = "--stdio",
+                    Arguments = arguments,
                     UseShellExecute = false,
                     RedirectStandardInput = true,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
-                    CreateNoWindow = true
+                    CreateNoWindow = true,
                 };
+                if (!string.IsNullOrWhiteSpace(workspacePath) && Directory.Exists(workspacePath))
+                {
+                    psi.WorkingDirectory = workspacePath;
+                }
 
                 var proc = Process.Start(psi);
                 if (proc != null && !proc.HasExited)
                 {
-                    Console.Error.WriteLine($"LspProxy: Successfully spawned upstream Roslyn server: {cmd}");
                     return proc;
                 }
+                failures.Add($"'{cmd}' (exited immediately)");
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 // OS が PATH または指定パスから実行可能ファイルを見つけられなかった場合、次の候補へ
-                continue;
+                failures.Add($"'{cmd}' ({ex.Message})");
             }
         }
 
-        // 5. すべて見つからなかった場合はエラー終了
         throw new InvalidOperationException(
-            "Upstream Roslyn LSP server could not be started.\n" +
-            "Priority order checked:\n" +
-            "  1. Explicit argument (--upstream <path>)\n" +
-            "  2. Environment variable (UNITY_CSHARP_LSP_PATH)\n" +
-            "  3. OS PATH resolution (UnityCSharpLSP.Server.exe, UnityCSharpLSP.exe)\n" +
-            "  4. Standard installation directories (%LOCALAPPDATA%\\Programs\\UnityCSharpLSP, etc.)\n" +
-            "  5. FAILED: No upstream server could be executed. Please ensure UnityCSharpLSP is in PATH or specify --upstream <path>."
-        );
+            $"Could not start {name}. Tried: {string.Join(", ", failures)}.");
     }
 
     public void Dispose()
