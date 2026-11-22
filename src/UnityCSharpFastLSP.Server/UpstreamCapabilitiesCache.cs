@@ -120,6 +120,9 @@ public sealed class UpstreamCapabilitiesCache
     /// </summary>
     public static void MergeInto(JsonObject fast, JsonObject upstream)
     {
+        // experimental.unitylsp.methods はプロキシがどちらかで答えられるので和集合にする
+        MergeUnityLspMethods(fast, upstream);
+
         foreach (KeyValuePair<string, JsonNode?> pair in upstream)
         {
             if (FastOwnedKeys.Contains(pair.Key)) continue;
@@ -127,5 +130,45 @@ public sealed class UpstreamCapabilitiesCache
             if (pair.Value is null) continue;
             fast[pair.Key] = pair.Value.DeepClone();
         }
+    }
+
+    /// <summary>capabilities.experimental.unitylsp.methods を読む（無ければ空）。</summary>
+    public static HashSet<string> GetUnityLspMethods(JsonObject? capabilities)
+    {
+        var methods = new HashSet<string>(StringComparer.Ordinal);
+        if (capabilities?["experimental"]?["unitylsp"]?["methods"] is JsonArray array)
+        {
+            foreach (JsonNode? item in array)
+            {
+                if (item is JsonValue value && value.TryGetValue(out string? name) && !string.IsNullOrEmpty(name))
+                {
+                    methods.Add(name);
+                }
+            }
+        }
+        return methods;
+    }
+
+    private static void MergeUnityLspMethods(JsonObject fast, JsonObject upstream)
+    {
+        HashSet<string> upstreamMethods = GetUnityLspMethods(upstream);
+        if (upstreamMethods.Count == 0) return;
+
+        HashSet<string> union = GetUnityLspMethods(fast);
+        union.UnionWith(upstreamMethods);
+
+        if (fast["experimental"] is not JsonObject experimental)
+        {
+            if (fast["experimental"] is not null) return; // 想定外の形は触らない
+            experimental = new JsonObject();
+            fast["experimental"] = experimental;
+        }
+        if (experimental["unitylsp"] is not JsonObject unitylsp)
+        {
+            unitylsp = new JsonObject();
+            experimental["unitylsp"] = unitylsp;
+        }
+        unitylsp["methods"] = new JsonArray(union.OrderBy(m => m, StringComparer.Ordinal)
+            .Select(m => (JsonNode?)JsonValue.Create(m)).ToArray());
     }
 }

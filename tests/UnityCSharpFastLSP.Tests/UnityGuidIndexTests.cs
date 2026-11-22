@@ -165,6 +165,83 @@ public class UnityGuidIndexTests
     }
 
     [Fact]
+    public void FindReferences_IncludePatternsReplaceDefaultExtensions()
+    {
+        using var ws = CreateGuidSample();
+        ws.Write("Assets/Scripts/GuidHolder.cs", $"public static class GuidHolder {{ public const string Id = \"{PlayerGuid}\"; }}\n");
+        UnityGuidIndex index = BuildIndex(ws);
+
+        // 既定では .cs は対象外
+        Assert.DoesNotContain(index.FindReferences(PlayerGuid).References, r => r.Uri.EndsWith(".cs", StringComparison.Ordinal));
+
+        // includePatterns を指定すると既定の拡張子の代わりになる（*.cs も走査できる）
+        var onlyCs = index.FindReferences(PlayerGuid, includePatterns: ["*.cs"]);
+        var cs = Assert.Single(onlyCs.References);
+        Assert.EndsWith("GuidHolder.cs", cs.Uri);
+        Assert.Null(cs.ClassId);
+
+        // ディレクトリ指定（ルート相対）
+        var scenes = index.FindReferences(PlayerGuid, includePatterns: ["Assets/Scenes/**"]);
+        Assert.Equal(2, scenes.References.Count);
+        Assert.All(scenes.References, r => Assert.EndsWith("Main.unity", r.Uri));
+    }
+
+    [Fact]
+    public void FindReferences_ExcludePatternsAlwaysRemoveFiles()
+    {
+        using var ws = CreateGuidSample();
+        UnityGuidIndex index = BuildIndex(ws);
+
+        var noScenes = index.FindReferences(PlayerGuid, excludePatterns: ["*.unity"]);
+        var prefab = Assert.Single(noScenes.References);
+        Assert.EndsWith("Hero.prefab", prefab.Uri);
+
+        // include と exclude の併用、否定パターン
+        var negated = index.FindReferences(PlayerGuid, includePatterns: ["*.unity", "*.prefab", "!Hero.prefab"]);
+        Assert.Equal(2, negated.References.Count);
+        Assert.All(negated.References, r => Assert.EndsWith("Main.unity", r.Uri));
+
+        // maxResults が 0 以下なら既定値
+        Assert.Equal(3, index.FindReferences(PlayerGuid, maxResults: 0).References.Count);
+    }
+
+    [Theory]
+    [InlineData("Assets/Scripts/Player.cs", "*.cs", true)]
+    [InlineData("Assets/Scripts/Player.cs", "*.CS", true)]
+    [InlineData("Assets/Scripts/Player.cs", "Assets/**", true)]
+    [InlineData("Assets/Scripts/Player.cs", "Assets/*.cs", false)]
+    [InlineData("Assets/Scripts/Player.cs", "Assets/**/Player.cs", true)]
+    [InlineData("Assets/Player.cs", "Assets/**/Player.cs", true)]
+    [InlineData("Assets/Scripts/Player.cs", "Pl?yer.cs", true)]
+    [InlineData("Assets/Scripts/Player.cs", "~Scripts/Pla", true)]
+    [InlineData("Library/PackageCache/x/a.prefab", "Library/PackageCache/**", true)]
+    [InlineData("Assets/a.prefab", "Library/PackageCache/**", false)]
+    public void GlobPatternMatcher_MatchesLikeUnityCSharpLsp(string path, string pattern, bool expected)
+    {
+        Assert.Equal(expected, GlobPatternMatcher.Matches(path, pattern));
+    }
+
+    [Fact]
+    public void Index_Disabled_HoldsNothingAndAnswersNothing()
+    {
+        using var ws = CreateGuidSample();
+        var index = new UnityGuidIndex();
+        index.Disable();
+
+        Assert.Equal(0, index.Index(ws.Root));
+        Assert.Equal(0, index.Count);
+        Assert.Null(index.ResolveGuid(null, ws.FullPath("Assets/Scripts/Player.cs")));
+        Assert.Null(index.FindDefinition(PlayerGuid));
+        Assert.Empty(index.FindReferences(PlayerGuid).References);
+
+        // 有効化済みの索引を止めると破棄される
+        UnityGuidIndex built = BuildIndex(ws);
+        Assert.Equal(3, built.Count);
+        built.Disable();
+        Assert.Equal(0, built.Count);
+    }
+
+    [Fact]
     public async Task Mcp_GuidTools_ResolveRelativeAssetPath()
     {
         using var ws = CreateGuidSample();
@@ -187,9 +264,22 @@ public class UnityGuidIndexTests
         Assert.EndsWith("Red.mat", def["assetUri"]!.GetValue<string>());
         Assert.EndsWith("Red.mat.meta", def["meta"]!["uri"]!.GetValue<string>());
 
-        JsonObject bad = McpTestSession.ResultOf(await mcp.CallToolAsync("unity_guid_references", new JsonObject()));
-        Assert.True(bad["isError"]!.GetValue<bool>());
-        Assert.Equal(-32602, McpTestSession.TextOf(bad)!["code"]!.GetValue<int>());
+        // UnityCSharpLSP と同じく、引数なし・不正な guid はエラーではなく null
+        JsonObject missing = McpTestSession.ResultOf(await mcp.CallToolAsync("unity_guid_references", new JsonObject()));
+        Assert.False(missing["isError"]?.GetValue<bool>() ?? false, missing.ToJsonString());
+        Assert.Null(McpTestSession.TextOf(missing));
+        JsonObject invalid = McpTestSession.ResultOf(await mcp.CallToolAsync("unity_guid_definition", new JsonObject { ["guid"] = "xyz" }));
+        Assert.False(invalid["isError"]?.GetValue<bool>() ?? false, invalid.ToJsonString());
+        Assert.Null(McpTestSession.TextOf(invalid));
+
+        // includePatterns / excludePatterns も MCP から渡せる
+        JsonObject filtered = McpTestSession.ResultOf(await mcp.CallToolAsync("unity_guid_references", new JsonObject
+        {
+            ["guid"] = PlayerGuid,
+            ["includePatterns"] = new JsonArray("Assets/Scenes/**"),
+            ["excludePatterns"] = new JsonArray("*.prefab"),
+        }));
+        Assert.Equal(2, McpTestSession.TextOf(filtered)!["references"]!.AsArray().Count);
     }
 
     [Fact]

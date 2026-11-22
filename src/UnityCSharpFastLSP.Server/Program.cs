@@ -65,7 +65,8 @@ INTELLIGENT HYBRID PROXY PRIORITY:
     4. Standard installation directories (%LOCALAPPDATA%\Programs\..., ~/.dotnet/tools, ...)
     5. Providers are tried in order: UnityCSharpLSP -> csharp-ls -> OmniSharp.
        With --upstream-kind <k> only that provider is tried. Upstream failure is non-fatal:
-       FastLSP keeps answering its fast methods; heavy / empty-result requests cannot fall back.
+       FastLSP keeps answering its fast methods; requests that need upstream (including
+       ones queued while it was starting) get a RequestFailed (-32803) error with the reason.
 
 UPSTREAM CAPABILITIES CACHE (--proxy):
     The proxy answers 'initialize' immediately and does not wait for the upstream server.

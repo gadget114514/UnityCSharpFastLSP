@@ -165,17 +165,27 @@ claude mcp add unity-csharp-fast-lsp -- <path/to/UnityCSharpFastLSP.Server.exe> 
 | `workspace_didChangeConfiguration` | 通知を送り `null` を返す | 通知は無視される（§6） | UnityCSharpLSP へ転送 |
 | `lsp_reset` | ブリッジ独自。全ドキュメント `didClose` + `unitycsharp.reloadWorkspace` | didClose のみ（reload は実行されない。§6） | didClose + UnityCSharpLSP で reload |
 | `lsp_diagnostics_cached` | ブリッジ独自。`publishDiagnostics` のキャッシュを返す（`uri` 省略で全件） | ブリッジ内で完結 | ブリッジ内で完結 |
-| `unity_guid_definition` | FastLSP 独自 `unityFast/guidDefinition`。`guid` または `asset` から `.meta` とアセット本体を返す（`readOnlyHint`） | FastLSP | FastLSP（upstream へフォールバックしない） |
-| `unity_guid_references` | FastLSP 独自 `unityFast/guidReferences`。guid を参照するシーン・プレハブ・マテリアル・`.asset`・`.meta`・`.asmdef/.asmref` の位置を返す（`readOnlyHint`） | FastLSP | FastLSP（upstream へフォールバックしない） |
+| `unity_guid_definition` | FastLSP 独自 `unitylsp/guidDefinition`。`guid` または `asset` から `.meta` とアセット本体を返す（`readOnlyHint`） | FastLSP | upstream が advertise していれば upstream、無ければ FastLSP |
+| `unity_guid_references` | FastLSP 独自 `unitylsp/guidReferences`。guid を参照するシーン・プレハブ・マテリアル・`.asset`・`.meta`・`.asmdef/.asmref` の位置を返す（`readOnlyHint`） | FastLSP | upstream が advertise していれば upstream、無ければ FastLSP |
 
 #### Unity GUID ツール
 
-- 引数: `guid`（32 桁 16 進）または `asset`（アセット・スクリプト・`.meta` のパス。`file:///` URI / 絶対 / ワークスペース相対）。`unity_guid_references` は `maxResults`（既定 500）も取る。
+仕様（メソッド名・引数・結果の形）は UnityCSharpLSP の同名メソッド・同名ツールと同じ。
+
+- 引数: `guid`（32 桁 16 進）または `asset`（アセット・スクリプト・`.meta` のパス。`file:///` URI / 絶対 / ワークスペース相対）。
+  どちらも無い・`guid` が不正・`.meta` が見つからない場合は、エラーにせず `null` を返す。
+- `unity_guid_references` だけが取る引数:
+  - `maxResults`: 返す参照の上限（既定 500。0 以下も既定値）。超えたら `truncated: true`。
+  - `includePatterns`: 走査するファイルの glob（プロジェクトルート相対）。指定すると既定のテキストアセット拡張子の代わりになるので、`*.cs` なども走査できる。例: `["*.prefab", "Assets/Scenes/**", "*.cs"]`
+  - `excludePatterns`: 常に除外するファイルの glob。例: `["Library/PackageCache/**", "*.meta"]`
+  - glob の書式: `/` を含まないパターンはファイル名と照合（`*.cs` は ripgrep の `-g '*.cs'` と同じ）。`*` は `/` 以外の任意文字列、`**` は任意の階層、`?` は 1 文字、先頭 `!` で否定（後のパターンが優先）、先頭 `~` でパスの部分一致。大文字小文字は区別しない。
 - `unity_guid_definition` の結果: `{ guid, assetUri, meta: Location }`（見つからなければ `null`）。
 - `unity_guid_references` の結果: `{ guid, assetUri, references: [{ uri, range, lineText, classId?, objectFileId?, fileId? }], truncated }`。
   `classId` / `objectFileId` は YAML 上の所属オブジェクト（`--- !u!<classId> &<objectFileId>`）、`fileId` は同じ行の `fileID:`。
 - 索引方式: 起動時に `Assets/`・`Packages/`・`Library/PackageCache/` の `*.meta` から guid → アセットだけを常駐索引する。参照は呼び出しのたびにテキストアセットを並列走査する（Binary 直列化のアセットは対象外）。索引後に追加された `.meta` は未登録 guid の問い合わせ時に再走査して拾う（最短 5 秒間隔）。
 - 例: `{"asset":"Assets/Scripts/Player.cs"}` → `Player` MonoBehaviour をアタッチしたプレハブ・シーンの `m_Script` 行の一覧。
+  `{"asset":"Assets/Scripts/Player.cs","includePatterns":["Assets/Scenes/**"]}` → シーン内の参照だけ。
+- プロキシ（`--proxy`）での担当: upstream が initialize 応答の `capabilities.experimental.unitylsp.methods` でメソッドを advertise していれば upstream だけが答え、FastLSP 側の GUID 機能（`.meta` 索引と応答）は完全に止める（upstream のエラーもそのまま返し、FastLSP にはフォールバックしない）。advertise していない、または upstream が起動しなかった場合は FastLSP が答える。詳細は `doc/proxy-feature.md` §1.2。
 
 `workspace_executeCommand` の `command` に指定できる値（enum）:
 `unitycsharp.reloadWorkspace`, `unitycsharp.showWorkspaceInfo`, `unitycsharp.getSceneOrPrefabHierarchy`, `unitycsharp.findSymbolUsagesInAssets`, `unitycsharp.findGuidReferences`, `unitycsharp.listReferencedGuids`, `unitycsharp.assetServerStatus`。

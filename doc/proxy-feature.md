@@ -49,6 +49,34 @@ FastLSP answers the fast-path methods above, but when its result is empty (`null
 - Error responses are not retried; only empty successful results trigger the fallback.
 - In `--mcp --proxy` mode the same behavior applies through `LspProxy`, and the MCP tool call waits for the upstream response.
 
+### 1.2 `unitylsp/*` Extension Methods: Upstream Wins When Advertised
+
+The proxy has two opposite priorities:
+
+| Methods | Priority | Rule |
+| :--- | :--- | :--- |
+| Fast-path methods (§1 table) | **FastLSP first** | FastLSP answers; only an empty result falls back to upstream (§1.1). |
+| `unitylsp/*` (e.g. `unitylsp/guidDefinition`, `unitylsp/guidReferences`) | **Upstream first** | Decided by what the upstream advertises, not by trial. |
+
+Advertising format (FastLSP advertises its own methods the same way; the proxy's `initialize` result lists the union):
+
+```json
+{ "capabilities": { "experimental": { "unitylsp": { "methods": ["unitylsp/guidDefinition", "unitylsp/guidReferences"] } } } }
+```
+
+Routing of a `unitylsp/*` request:
+
+1. **Advertised by upstream** → always forwarded to upstream (queued while it starts). FastLSP never answers it, even if upstream returns an error or is not reachable (the client gets the upstream error or `RequestFailed`).
+2. **Not advertised** → FastLSP answers it (no fallback to upstream).
+
+When upstream takes over the GUID methods, FastLSP stops that feature completely: the `.meta` GUID index is not built (or is discarded if already built) and FastLSP's own handler returns `MethodNotFound`.
+
+When the decision is made:
+
+- At `initialize`, from the cached upstream capabilities of the previous run (`upstream-capabilities/<kind>.json`), before FastLSP starts indexing.
+- When the live upstream `initialize` response arrives, which replaces the cached decision (re-enabling FastLSP's GUID index in the background if upstream no longer advertises it).
+- If no upstream can be started, upstream advertises nothing and FastLSP takes the methods over. Requests already queued for upstream at that moment still fail with `RequestFailed`.
+
 ---
 
 ## 2. Architecture & Request Flow

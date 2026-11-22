@@ -132,7 +132,7 @@ Tool name = LSP method with `/` replaced by `_`. Positions are 0-based (line, UT
 | Hover info | `textDocument_hover` | `{"textDocument":{"uri":"Assets/Scripts/Player.cs"},"position":{"line":10,"character":8}}` |
 | Rename (proxy) | `textDocument_rename` | `{"textDocument":{"uri":"Assets/Scripts/Player.cs"},"position":{"line":10,"character":8},"newName":"PlayerController"}` |
 | Asset usages (proxy) | `workspace_executeCommand` | `{"command":"unitycsharp.findSymbolUsagesInAssets","arguments":[...]}`. The `arguments` shape is defined in the UnityCSharpLSP documentation. Check it there rather than guessing. |
-| Where is a script/asset used in scenes & prefabs | `unity_guid_references` | `{"asset":"Assets/Scripts/Player.cs"}` or `{"guid":"0123456789abcdef0123456789abcdef"}` |
+| Where is a script/asset used in scenes & prefabs | `unity_guid_references` | `{"asset":"Assets/Scripts/Player.cs"}` or `{"guid":"0123456789abcdef0123456789abcdef"}`; narrow with `"includePatterns":["Assets/Scenes/**"]` / `"excludePatterns":["*.meta"]` |
 | What asset does a GUID point to | `unity_guid_definition` | `{"guid":"0123456789abcdef0123456789abcdef"}` |
 | Reload after bulk edits | `lsp_reset` | `{}` |
 | Cached diagnostics | `lsp_diagnostics_cached` | `{}` or `{"uri":"Assets/Scripts/Player.cs"}` |

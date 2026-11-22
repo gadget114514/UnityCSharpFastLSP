@@ -13,6 +13,10 @@ public sealed class LspProxy : IDisposable
     private readonly Stream _clientOutput;
     private readonly CancellationTokenSource _cts = new();
     private readonly ConcurrentQueue<byte[]> _pendingMessages = new();
+    private readonly object _pendingLock = new();
+
+    /// <summary>upstream プロセスを起動する関数（テストで差し替え可能）。</summary>
+    private readonly Func<UpstreamAttempt, string?, Process> _upstreamStarter;
     private Process? _upstreamProcess;
     private StreamWriter? _upstreamInput;
     private volatile bool _upstreamReady;
@@ -42,19 +46,33 @@ public sealed class LspProxy : IDisposable
         "textDocument/documentHighlight",
         "textDocument/documentSymbol",
         "workspace/symbol",
-        LspServer.GuidDefinitionMethod,
-        LspServer.GuidReferencesMethod,
     };
 
-    /// <summary>FastLSP 独自のメソッド。Upstream は知らないので、空結果でもフォールバックしない。</summary>
-    private static readonly HashSet<string> NoFallbackMethods = new(StringComparer.Ordinal)
-    {
-        LspServer.GuidDefinitionMethod,
-        LspServer.GuidReferencesMethod,
-    };
+    /// <summary>
+    /// <c>unitylsp/*</c> 拡張メソッド。ルーティングの優先順位が <see cref="FastMethods"/> と逆で、
+    /// upstream が capabilities.experimental.unitylsp.methods で advertise していれば upstream だけが答え、
+    /// FastLSP 側のその機能（GUID 索引など）は完全に止める（フォールバックもしない）。
+    /// advertise していないときだけ FastLSP が答える。
+    /// （<see cref="FastMethods"/> は FastLSP 優先で、空結果のときだけ upstream にフォールバックする。）
+    /// </summary>
+    public const string UnityLspPrefix = "unitylsp/";
 
-    /// <summary>FastLSP が直接応答するメソッドか（false なら Upstream へ委譲される）。</summary>
-    public static bool IsFastPath(string method) => FastMethods.Contains(method);
+    /// <summary>
+    /// upstream が advertise した unitylsp/* メソッド。upstream の initialize 応答で確定し、
+    /// それまでは前回キャッシュした capabilities の値を使う（キャッシュも無ければ空 = FastLSP が答える）。
+    /// </summary>
+    private volatile HashSet<string> _upstreamUnityLspMethods = new(StringComparer.Ordinal);
+
+    public static bool IsUnityLspMethod(string method) => method.StartsWith(UnityLspPrefix, StringComparison.Ordinal);
+
+    /// <summary>
+    /// FastLSP が応答し得るメソッドか（false なら Upstream へ委譲される）。
+    /// unitylsp/* は upstream が advertise していなければ FastLSP が応答するので true（upstream 不在でもエラーにしない）。
+    /// </summary>
+    public static bool IsFastPath(string method) => FastMethods.Contains(method) || IsUnityLspMethod(method);
+
+    /// <summary>FastLSP 側の GUID 機能（索引・unitylsp/guid* 応答）が有効か。upstream が advertise すると false。</summary>
+    public bool FastGuidFeatureEnabled => _fastServer.State.WorkspaceManager.GuidIndex.Enabled;
 
     /// <summary>Upstream の起動に失敗した、または起動後に終了した場合のエラー内容。利用可能なら null。</summary>
     public string? UpstreamError
@@ -79,8 +97,10 @@ public sealed class LspProxy : IDisposable
         string? upstreamExecutablePath = null,
         UpstreamKind upstreamKind = UpstreamKind.Auto,
         string? workspacePath = null,
-        UpstreamCapabilitiesCache? capabilitiesCache = null)
+        UpstreamCapabilitiesCache? capabilitiesCache = null,
+        Func<UpstreamAttempt, string?, Process>? upstreamStarter = null)
     {
+        _upstreamStarter = upstreamStarter ?? StartUpstreamProcess;
         _capabilitiesCache = capabilitiesCache ?? UpstreamCapabilitiesCache.CreateDefault();
         _clientOutput = clientOutput;
         _fastServer = new LspServer(clientOutput, isProxy: true);
@@ -101,7 +121,7 @@ public sealed class LspProxy : IDisposable
         {
             try
             {
-                var proc = StartUpstreamProcess(attempt, _workspacePath);
+                var proc = _upstreamStarter(attempt, _workspacePath);
                 _upstreamProcess = proc;
                 _upstreamInput = proc.StandardInput;
                 _upstreamKind = attempt.Kind;
@@ -115,10 +135,7 @@ public sealed class LspProxy : IDisposable
                 Task.Run(() => ReadUpstreamStderrLoop(name, proc.StandardError, ct));
 
                 // 起動前に蓄積されていた通知/リクエストを一気にフラッシュ転送
-                while (_pendingMessages.TryDequeue(out var msg))
-                {
-                    ForwardDirect(msg);
-                }
+                DrainPending();
                 return;
             }
             catch (Exception ex)
@@ -131,6 +148,12 @@ public sealed class LspProxy : IDisposable
 
         _upstreamStartError = "No upstream LSP server could be started.\n" + string.Join("\n", failures);
         Console.Error.WriteLine($"[LspProxy] Failed to initialize upstream server in background: {_upstreamStartError}");
+
+        // upstream が起動しなかったので advertise は無い: unitylsp/* は FastLSP が受け持つ
+        ApplyUpstreamUnityLspMethods(new HashSet<string>(StringComparer.Ordinal), "upstream could not be started");
+
+        // 起動待ちで溜まっていたリクエストにはエラーを返す（通知は捨てる）
+        DrainPending();
     }
 
     public bool HandleClientMessage(byte[] message)
@@ -154,7 +177,13 @@ public sealed class LspProxy : IDisposable
         //    ただし結果が空 (null / [] / {} / "") の場合は Upstream に委譲する。
         if (FastMethods.Contains(method))
         {
-            return HandleFastRequest(message, allowFallback: !NoFallbackMethods.Contains(method));
+            return HandleFastRequest(message, allowFallback: true);
+        }
+
+        // 2b. unitylsp/* 拡張: upstream 優先、FastLSP はフォールバック
+        if (IsUnityLspMethod(method))
+        {
+            return HandleUnityLspRequest(root, method, message);
         }
 
         // 3. initialize / initialized / shutdown / exit
@@ -191,6 +220,11 @@ public sealed class LspProxy : IDisposable
     /// </summary>
     private void HandleInitialize(byte[] message)
     {
+        // FastLSP がインデックスを始める前に、キャッシュ済み upstream の advertise で unitylsp/* の担当を決める
+        JsonObject? cached = _capabilitiesCache.Load(_requestedKind);
+        _advertisedUpstreamCapabilities = cached;
+        ApplyUpstreamUnityLspMethods(UpstreamCapabilitiesCache.GetUnityLspMethods(cached), "cached capabilities");
+
         _fastServer.BeginCapture();
         List<byte[]> captured;
         try
@@ -202,8 +236,6 @@ public sealed class LspProxy : IDisposable
             captured = _fastServer.EndCapture();
         }
 
-        JsonObject? cached = _capabilitiesCache.Load(_requestedKind);
-        _advertisedUpstreamCapabilities = cached;
         if (cached != null)
         {
             Console.Error.WriteLine(
@@ -239,6 +271,8 @@ public sealed class LspProxy : IDisposable
     {
         if (JsonNode.Parse(result.GetRawText()) is not JsonObject resultNode) return;
         if (resultNode["capabilities"] is not JsonObject capabilities) return;
+
+        ApplyUpstreamUnityLspMethods(UpstreamCapabilitiesCache.GetUnityLspMethods(capabilities), "upstream initialize");
         JsonNode? serverInfo = resultNode["serverInfo"];
 
         UpstreamKind actual = _upstreamKind;
@@ -257,6 +291,43 @@ public sealed class LspProxy : IDisposable
                 $"[LspProxy] Cached {UpstreamServerRegistry.DisplayName(actual)} capabilities to {_capabilitiesCache.GetPath(actual)}" +
                 (matchesAdvertised ? "" : "; they differ from what was advertised and take effect on the next start"));
         }
+    }
+
+    /// <summary>
+    /// unitylsp/* リクエスト（upstream 優先）。upstream がそのメソッドを advertise していれば必ず upstream に送る
+    /// （起動中はキュー、使えなければ RequestFailed。FastLSP にはフォールバックしない）。
+    /// advertise していなければ FastLSP が答える。
+    /// </summary>
+    private bool HandleUnityLspRequest(JsonElement root, string method, byte[] message)
+    {
+        if (_upstreamUnityLspMethods.Contains(method))
+        {
+            ForwardToUpstream(message);
+            return true;
+        }
+
+        // FastLSP に unitylsp/* 通知は無い
+        if (!root.TryGetProperty("id", out _)) return true;
+
+        return HandleFastRequest(message, allowFallback: false);
+    }
+
+    /// <summary>
+    /// upstream が advertise した unitylsp/* を反映する。upstream が担当する機能は FastLSP 側で完全に止め
+    /// （GUID 索引を破棄し、以後は作らない）、担当しない機能は FastLSP 側で有効にする。
+    /// </summary>
+    private void ApplyUpstreamUnityLspMethods(HashSet<string> methods, string source)
+    {
+        _upstreamUnityLspMethods = methods;
+
+        bool upstreamOwnsGuid = methods.Contains(LspServer.GuidDefinitionMethod) &&
+            methods.Contains(LspServer.GuidReferencesMethod);
+        _fastServer.State.WorkspaceManager.SetGuidIndexEnabled(!upstreamOwnsGuid);
+
+        Console.Error.WriteLine(methods.Count == 0
+            ? $"[LspProxy] Upstream advertises no unitylsp/* methods ({source}); FastLSP answers them."
+            : $"[LspProxy] Upstream advertises {string.Join(", ", methods.Order(StringComparer.Ordinal))} ({source}); " +
+              (upstreamOwnsGuid ? "FastLSP GUID feature is stopped." : "those go to upstream."));
     }
 
     /// <summary>
@@ -370,38 +441,112 @@ public sealed class LspProxy : IDisposable
         }
     }
 
+    /// <summary>upstream が起動済みで生存しているか。</summary>
+    private bool IsUpstreamAlive =>
+        _upstreamReady && _upstreamInput != null && _upstreamProcess != null && !_upstreamProcess.HasExited;
+
     private void ForwardToUpstream(byte[] message)
     {
-        if (_upstreamReady && _upstreamInput != null && _upstreamProcess != null && !_upstreamProcess.HasExited)
+        if (IsUpstreamAlive)
         {
             ForwardDirect(message);
+        }
+        else if (UpstreamError != null)
+        {
+            FailRequest(message);
         }
         else
         {
             _pendingMessages.Enqueue(message);
+            // Enqueue と起動完了／起動失敗が競合して取り残されないよう、状態が確定していれば即座に処理する
+            DrainPending();
+        }
+    }
+
+    /// <summary>
+    /// 溜まっているメッセージを処理する。upstream が生きていれば転送し、起動失敗・終了済みならリクエストに
+    /// エラーを返す。まだ起動中なら何もしない。
+    /// </summary>
+    private void DrainPending()
+    {
+        lock (_pendingLock)
+        {
+            while (_pendingMessages.TryPeek(out _))
+            {
+                bool alive = IsUpstreamAlive;
+                if (!alive && UpstreamError == null) return; // 起動中
+
+                if (!_pendingMessages.TryDequeue(out byte[]? message)) return;
+                if (alive)
+                {
+                    ForwardDirect(message);
+                }
+                else
+                {
+                    FailRequest(message);
+                }
+            }
         }
     }
 
     private void ForwardDirect(byte[] message)
     {
-        if (_upstreamInput == null || _upstreamProcess == null || _upstreamProcess.HasExited)
+        StreamWriter? input = _upstreamInput;
+        if (input == null || _upstreamProcess == null || _upstreamProcess.HasExited)
         {
+            FailRequest(message);
             return;
         }
 
         try
         {
             byte[] frame = LspMessageWriter.Frame(message);
-            lock (_upstreamInput)
+            lock (input)
             {
-                _upstreamInput.BaseStream.Write(frame, 0, frame.Length);
-                _upstreamInput.BaseStream.Flush();
+                input.BaseStream.Write(frame, 0, frame.Length);
+                input.BaseStream.Flush();
             }
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"LspProxy: Error forwarding to upstream: {ex.Message}");
+            FailRequest(message);
         }
+    }
+
+    /// <summary>
+    /// upstream に届けられなかったメッセージがリクエストなら、RequestFailed のエラー応答をクライアントへ返す。
+    /// 通知と、FastLSP が既に応答済みのリクエスト（initialize / shutdown）には何も返さない。
+    /// </summary>
+    private void FailRequest(byte[] message)
+    {
+        JsonObject response;
+        string method;
+        try
+        {
+            if (JsonNode.Parse(message) is not JsonObject request) return;
+            if (!request.TryGetPropertyValue("id", out JsonNode? id)) return;
+            method = request["method"]?.GetValue<string>() ?? "";
+            if (method is "" or "initialize" or "shutdown") return;
+
+            string reason = UpstreamError ?? "Upstream LSP server is not available.";
+            response = new JsonObject
+            {
+                ["jsonrpc"] = "2.0",
+                ["id"] = id?.DeepClone(),
+                ["error"] = new JsonObject
+                {
+                    ["code"] = JsonRpcErrorCode.RequestFailed,
+                    ["message"] = $"{method} needs the upstream LSP server, which is not available. {reason}",
+                },
+            };
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException)
+        {
+            return;
+        }
+
+        WriteToClient(Encoding.UTF8.GetBytes(response.ToJsonString()));
     }
 
     private async Task ReadUpstreamLoop(Stream upstreamStream, CancellationToken ct)

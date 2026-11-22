@@ -38,20 +38,51 @@ public sealed class UnityGuidIndex
     private long _lastRescanTicks;
     private static readonly TimeSpan RescanInterval = TimeSpan.FromSeconds(5);
 
+    private volatile bool _enabled = true;
+
     /// <summary>索引済みの guid 数。</summary>
     public int Count => _byGuid.Count;
+
+    /// <summary>
+    /// GUID 機能が有効か。プロキシで upstream が unitylsp/guid* を advertise した場合は無効化され、
+    /// 索引を持たず、走査も応答もしない。
+    /// </summary>
+    public bool Enabled => _enabled;
+
+    /// <summary>有効にする（索引の作成は呼び出し側が <see cref="Index"/> で行う）。</summary>
+    public void Enable() => _enabled = true;
+
+    /// <summary>機能を止め、索引を破棄する。</summary>
+    public void Disable()
+    {
+        _enabled = false;
+        _byGuid.Clear();
+        _guidByAssetPath.Clear();
+    }
 
     /// <summary>ワークスペース配下の *.meta を走査して guid → アセットを索引する。</summary>
     public int Index(string rootPath)
     {
-        if (string.IsNullOrEmpty(rootPath) || !Directory.Exists(rootPath)) return 0;
+        if (!_enabled || string.IsNullOrEmpty(rootPath) || !Directory.Exists(rootPath)) return 0;
         _rootPath = rootPath;
 
         int count = 0;
-        Parallel.ForEach(EnumerateFiles(rootPath, "*.meta"), metaPath =>
+        Parallel.ForEach(EnumerateFiles(rootPath, "*.meta"), (metaPath, state) =>
         {
+            if (!_enabled)
+            {
+                state.Stop();
+                return;
+            }
             if (TryAddMeta(metaPath) != null) Interlocked.Increment(ref count);
         });
+
+        if (!_enabled)
+        {
+            // 走査中に止められた
+            Disable();
+            return 0;
+        }
         return count;
     }
 
@@ -72,6 +103,8 @@ public sealed class UnityGuidIndex
     /// </summary>
     public string? ResolveGuid(string? guid, string? asset)
     {
+        if (!_enabled) return null;
+
         if (!string.IsNullOrWhiteSpace(guid))
         {
             string trimmed = guid.Trim();
@@ -94,6 +127,7 @@ public sealed class UnityGuidIndex
     /// <summary>guid の定義（.meta 内の guid 位置とアセット本体）。見つからなければ null。</summary>
     public GuidDefinitionResult? FindDefinition(string guid)
     {
+        if (!_enabled) return null;
         if (!TryGetEntry(guid, out GuidEntry entry)) return null;
 
         var start = new Position(entry.Line, entry.Character);
@@ -104,11 +138,22 @@ public sealed class UnityGuidIndex
             new Location(WorkspaceManager.PathToFileUri(entry.MetaPath), range));
     }
 
-    /// <summary>guid を参照しているテキストアセットの位置を走査する（自身の .meta は除く）。</summary>
-    public GuidReferencesResult FindReferences(string guid, int? maxResults = null)
+    /// <summary>
+    /// guid を参照しているテキストアセットの位置を走査する（自身の .meta は除く）。
+    /// パターンはプロジェクトルート相対パスに対する <see cref="GlobPatternMatcher"/> の glob。
+    /// <paramref name="includePatterns"/> を指定すると既定の拡張子フィルタの代わりになり（*.cs なども対象にできる）、
+    /// <paramref name="excludePatterns"/> に一致するファイルは常に除く。maxResults が 0 以下なら既定値。
+    /// </summary>
+    public GuidReferencesResult FindReferences(
+        string guid,
+        int? maxResults = null,
+        IReadOnlyList<string>? includePatterns = null,
+        IReadOnlyList<string>? excludePatterns = null)
     {
-        int limit = Math.Clamp(maxResults ?? DefaultMaxResults, 1, 100_000);
-        string? root = _rootPath;
+        int limit = Math.Clamp(maxResults is > 0 ? maxResults.Value : DefaultMaxResults, 1, 100_000);
+        bool hasInclude = includePatterns is { Count: > 0 };
+        bool hasExclude = excludePatterns is { Count: > 0 };
+        string? root = _enabled ? _rootPath : null;
         bool known = TryGetEntry(guid, out GuidEntry entry);
         string? selfMeta = known ? Path.GetFullPath(entry.MetaPath) : null;
 
@@ -121,7 +166,22 @@ public sealed class UnityGuidIndex
             byte[] needle = Encoding.ASCII.GetBytes(guid);
             Parallel.ForEach(EnumerateFiles(root, "*"), (path, state) =>
             {
-                if (!ReferenceExtensions.Contains(Path.GetExtension(path))) return;
+                if (hasInclude || hasExclude)
+                {
+                    string relative = Path.GetRelativePath(root, path).Replace('\\', '/');
+                    if (hasExclude && GlobPatternMatcher.MatchesAny(relative, excludePatterns)) return;
+                    if (hasInclude
+                            ? !GlobPatternMatcher.MatchesAny(relative, includePatterns)
+                            : !ReferenceExtensions.Contains(Path.GetExtension(path)))
+                    {
+                        return;
+                    }
+                }
+                else if (!ReferenceExtensions.Contains(Path.GetExtension(path)))
+                {
+                    return;
+                }
+
                 if (selfMeta != null && string.Equals(Path.GetFullPath(path), selfMeta, StringComparison.OrdinalIgnoreCase)) return;
 
                 foreach (GuidReference reference in ScanFile(path, needle))
@@ -175,6 +235,7 @@ public sealed class UnityGuidIndex
     /// <summary>.meta の先頭から guid を読み、索引に登録する。guid を返す（読めなければ null）。</summary>
     private string? TryAddMeta(string metaPath)
     {
+        if (!_enabled) return null;
         try
         {
             using var reader = new StreamReader(metaPath, Encoding.UTF8);

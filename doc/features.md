@@ -50,10 +50,12 @@ Unlike Roslyn which maintains heavy semantic trees, UnityCSharpFastLSP implement
      `SerializeField`, `HideInInspector`, `RequireComponent`, `Header`, `Tooltip`, `Range`, `Space`, `DisallowMultipleComponent`, `ExecuteInEditMode`, `CreateAssetMenu`, `MenuItem`.
 3. **Seeded Preprocessor Symbols**:
    - Supports conditional compilation symbols such as `UNITY_EDITOR` for correct CST branch selection.
-4. **Asset GUID Definition / References** (custom methods `unityFast/guidDefinition`, `unityFast/guidReferences`; MCP tools `unity_guid_definition`, `unity_guid_references`):
+4. **Asset GUID Definition / References** (custom methods `unitylsp/guidDefinition`, `unitylsp/guidReferences`; MCP tools `unity_guid_definition`, `unity_guid_references`):
    - Resolves a GUID (or an asset/script path) to its `.meta` file and asset.
    - Finds scenes, prefabs, materials, ScriptableObjects, `.meta` and `.asmdef`/`.asmref` files that reference the GUID, with the owning YAML object's `classId` / `fileID`.
    - Only `.meta` GUIDs are kept in memory; references are found by a parallel byte scan of text assets on each request (binary-serialized assets are skipped).
+   - `includePatterns` / `excludePatterns` (globs relative to the project root) choose the files to scan; `includePatterns` replaces the default extensions, so e.g. `*.cs` can be searched. Same specification as UnityCSharpLSP.
+   - Advertised as `capabilities.experimental.unitylsp.methods`. In proxy mode, an upstream that advertises these methods answers them and FastLSP's GUID feature is turned off.
 
 ---
 

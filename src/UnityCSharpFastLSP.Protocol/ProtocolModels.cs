@@ -205,7 +205,21 @@ public sealed record ServerCapabilities(
     [property: JsonPropertyName("documentHighlightProvider")] bool DocumentHighlightProvider = true,
     [property: JsonPropertyName("workspaceSymbolProvider")] bool WorkspaceSymbolProvider = true,
     [property: JsonPropertyName("renameProvider")] bool? RenameProvider = null,
-    [property: JsonPropertyName("codeActionProvider")] bool? CodeActionProvider = null
+    [property: JsonPropertyName("codeActionProvider")] bool? CodeActionProvider = null,
+    [property: JsonPropertyName("experimental")] ServerExperimentalCapabilities? Experimental = null
+);
+
+/// <summary>capabilities.experimental。独自拡張の advertise に使う。</summary>
+public sealed record ServerExperimentalCapabilities(
+    [property: JsonPropertyName("unitylsp")] UnityLspCapabilities? Unitylsp = null
+);
+
+/// <summary>
+/// capabilities.experimental.unitylsp。対応している <c>unitylsp/*</c> メソッド名の一覧。
+/// UnityCSharpLSP など upstream も同じ形で advertise する（プロキシはこれで振り分けを決める）。
+/// </summary>
+public sealed record UnityLspCapabilities(
+    [property: JsonPropertyName("methods")] List<string> Methods
 );
 
 public sealed record ReferenceContext(
@@ -350,13 +364,20 @@ public static class UriHelper
     }
 }
 
-// ---- Unity GUID 拡張（unityFast/guidDefinition, unityFast/guidReferences） ----
+// ---- Unity GUID 拡張（unitylsp/guidDefinition, unitylsp/guidReferences） ----
 
-/// <summary>guid（32 桁 16 進）か asset（file URI / 絶対パス）のどちらかを指定する。</summary>
+/// <summary>
+/// guid（32 桁 16 進）か asset（file URI / 絶対パス）のどちらかを指定する。UnityCSharpLSP と同じ形。
+/// includePatterns / excludePatterns は guidReferences のみ: プロジェクトルート相対パスに対する glob。
+/// includePatterns を指定すると既定のテキストアセット拡張子の代わりに使う（*.cs なども走査できる）。
+/// excludePatterns に一致するファイルは常に除く。
+/// </summary>
 public sealed record GuidQueryParams(
     [property: JsonPropertyName("guid")] string? Guid = null,
     [property: JsonPropertyName("asset")] string? Asset = null,
-    [property: JsonPropertyName("maxResults")] int? MaxResults = null
+    [property: JsonPropertyName("maxResults")] int? MaxResults = null,
+    [property: JsonPropertyName("includePatterns")] string[]? IncludePatterns = null,
+    [property: JsonPropertyName("excludePatterns")] string[]? ExcludePatterns = null
 );
 
 public sealed record GuidDefinitionResult(

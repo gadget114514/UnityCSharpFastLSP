@@ -12,8 +12,32 @@ public sealed class WorkspaceManager
     private readonly ManualResetEventSlim _indexReady = new(false);
     private readonly UnityGuidIndex _guidIndex = new();
 
+    private volatile string? _rootPath;
+
     /// <summary>Unity アセット GUID（.meta）の索引。</summary>
     public UnityGuidIndex GuidIndex => _guidIndex;
+
+    /// <summary>
+    /// GUID 機能の有効・無効を切り替える。無効にすると索引を破棄し、以後は作らない。
+    /// 有効に戻したとき、ワークスペースが分かっていれば索引をバックグラウンドで作り直す。
+    /// </summary>
+    public void SetGuidIndexEnabled(bool enabled)
+    {
+        if (enabled == _guidIndex.Enabled) return;
+
+        if (!enabled)
+        {
+            _guidIndex.Disable();
+            return;
+        }
+
+        _guidIndex.Enable();
+        string? root = _rootPath;
+        if (root != null)
+        {
+            Task.Run(() => _guidIndex.Index(root));
+        }
+    }
 
     /// <summary>ワークスペースのインデックス作成が完了したか。</summary>
     public bool IsIndexReady => _indexReady.IsSet;
@@ -49,8 +73,10 @@ public sealed class WorkspaceManager
             return 0;
         }
 
-        // .meta の GUID 索引は C# のシンボル索引と並行して作る
-        Task guidTask = Task.Run(() =>
+        _rootPath = rootPath;
+
+        // .meta の GUID 索引は C# のシンボル索引と並行して作る（GUID 機能が止められていれば作らない）
+        Task guidTask = !_guidIndex.Enabled ? Task.CompletedTask : Task.Run(() =>
         {
             try
             {

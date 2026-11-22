@@ -158,7 +158,7 @@ public static class McpToolTable
             )),
             Obj(F("uri", Str("file:/// URI, absolute path, or workspace-relative path")))),
 
-        // ---- 追加: Unity GUID（FastLSP 独自メソッド unityFast/*） ----
+        // ---- 追加: Unity GUID（FastLSP 独自メソッド unitylsp/*） ----
         new McpTool("unity_guid_definition", LspServer.GuidDefinitionMethod, McpToolKind.LspRequest, true,
             "Resolve a Unity asset GUID to its .meta file and asset. Pass 'guid' (32 hex chars) or 'asset' " +
             "(path of an asset, script or .meta; file:/// URI, absolute, or workspace-relative). Returns {guid, assetUri, meta: Location} or null.",
@@ -180,6 +180,11 @@ public static class McpToolTable
         if (withMax)
         {
             fields.Add(F("maxResults", Int($"Maximum number of references to return (default {UnityCSharpFastLSP.Workspace.UnityGuidIndex.DefaultMaxResults})", nonNegative: true)));
+            fields.Add(F("includePatterns", StrArray(
+                "Optional glob patterns of files to scan, relative to the project root (e.g. [\"*.prefab\", \"Assets/Scenes/**\", \"*.cs\"]). " +
+                "Replaces the default text-asset extensions, so non-asset files such as *.cs can be searched.")));
+            fields.Add(F("excludePatterns", StrArray(
+                "Optional glob patterns of files to skip (e.g. [\"Library/PackageCache/**\", \"*.meta\"]).")));
         }
         return Obj(fields.ToArray());
     }

@@ -69,8 +69,8 @@ LspJsonRpcSession (既存・無改造)  → Handlers → UnityWorkspaceManager /
 | `textDocument_inlayHint` | `textDocument/inlayHint` |
 | `textDocument_moniker` | `textDocument/moniker` |
 | `textDocument_prepareRename` | `textDocument/prepareRename` |
-| `unity_guid_definition` | `unityFast/guidDefinition`（FastLSP 独自。guid / asset → `.meta` とアセット） |
-| `unity_guid_references` | `unityFast/guidReferences`（FastLSP 独自。guid を参照する YAML アセット等の位置。詳細は doc/mcp.md §4.3） |
+| `unity_guid_definition` | `unitylsp/guidDefinition`（FastLSP 独自。guid / asset → `.meta` とアセット） |
+| `unity_guid_references` | `unitylsp/guidReferences`（FastLSP 独自。guid を参照する YAML アセット等の位置。詳細は doc/mcp.md §4.3） |
 
 ### 4.2 編集提案系（`WorkspaceEdit` / `TextEdit[]` を返すだけ。ファイルは書き換えない）
 
