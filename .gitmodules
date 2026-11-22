@@ -1,6 +1,3 @@
-[submodule "vendor/tree-sitter-c-sharp"]
-	path = vendor/tree-sitter-c-sharp
-	url = https://github.com/tree-sitter/tree-sitter-c-sharp.git
 [submodule "thirdparty/csff"]
 	path = thirdparty/csff
 	url = https://github.com/paq/csff
