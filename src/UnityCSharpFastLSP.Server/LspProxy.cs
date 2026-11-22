@@ -237,7 +237,7 @@ public sealed class LspProxy : IDisposable
 
         // 4. 標準インストール先ディレクトリのフォールバック
         candidates.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Programs\UnityCSharpLSP\UnityCSharpLSP.Server.exe"));
-        candidates.Add(@"D:\wsgit\UnityCSharpLSP\artifacts\publish\UnityCSharpLSP.Server.exe");
+        // 開発機固有の固定パスは持たない。ビルド出力を使う場合は --upstream か UNITY_CSHARP_LSP_PATH で指定する。
 
         foreach (var cmd in candidates)
         {
