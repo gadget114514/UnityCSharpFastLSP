@@ -22,6 +22,8 @@ Traditional Roslyn-based C# language servers (`UnityCSharpLSP`, `csharp-ls`, `Om
 - install the package with adding to find the executable in PATH
 - Talk to LLM, "find UnityCSharpFastLSP and read help" 
 
+---
+
 ## Performance Highlights
 
 For the full detailed benchmark methodology, in-process micro-benchmarks, and cold-start analyses, see the [Performance Comparison Report](doc/performance-comparison.md).
