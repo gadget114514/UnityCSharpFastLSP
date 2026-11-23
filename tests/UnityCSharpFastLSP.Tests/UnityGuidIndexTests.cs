@@ -222,6 +222,30 @@ public class UnityGuidIndexTests
     }
 
     [Fact]
+    public void FindReferences_CancelledToken_Throws()
+    {
+        using var ws = CreateGuidSample();
+        UnityGuidIndex index = BuildIndex(ws);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Assert.Throws<OperationCanceledException>(() => index.FindReferences(PlayerGuid, ct: cts.Token));
+    }
+
+    [Fact]
+    public void CancelReferenceSearches_StopsActiveSearches()
+    {
+        using var ws = CreateGuidSample();
+        UnityGuidIndex index = BuildIndex(ws);
+
+        index.CancelReferenceSearches();
+
+        Assert.Throws<OperationCanceledException>(() => index.FindReferences(PlayerGuid));
+        index.Enable();
+        Assert.Equal(3, index.FindReferences(PlayerGuid).References.Count);
+    }
+
+    [Fact]
     public void Index_Disabled_HoldsNothingAndAnswersNothing()
     {
         using var ws = CreateGuidSample();

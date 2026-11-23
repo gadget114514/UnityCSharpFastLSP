@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text;
+using System.Threading;
 using UnityCSharpFastLSP.Protocol;
 using Range = UnityCSharpFastLSP.Protocol.Range;
 
@@ -39,6 +40,19 @@ public sealed class UnityGuidIndex
     private static readonly TimeSpan RescanInterval = TimeSpan.FromSeconds(5);
 
     private volatile bool _enabled = true;
+    private volatile CancellationTokenSource _referenceSearchStop = new();
+
+    /// <summary>進行中の参照検索をすべて止める。</summary>
+    public void CancelReferenceSearches()
+    {
+        try
+        {
+            _referenceSearchStop.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
 
     /// <summary>索引済みの guid 数。</summary>
     public int Count => _byGuid.Count;
@@ -50,12 +64,17 @@ public sealed class UnityGuidIndex
     public bool Enabled => _enabled;
 
     /// <summary>有効にする（索引の作成は呼び出し側が <see cref="Index"/> で行う）。</summary>
-    public void Enable() => _enabled = true;
+    public void Enable()
+    {
+        _referenceSearchStop = new CancellationTokenSource();
+        _enabled = true;
+    }
 
     /// <summary>機能を止め、索引を破棄する。</summary>
     public void Disable()
     {
         _enabled = false;
+        CancelReferenceSearches();
         _byGuid.Clear();
         _guidByAssetPath.Clear();
     }
@@ -148,8 +167,12 @@ public sealed class UnityGuidIndex
         string guid,
         int? maxResults = null,
         IReadOnlyList<string>? includePatterns = null,
-        IReadOnlyList<string>? excludePatterns = null)
+        IReadOnlyList<string>? excludePatterns = null,
+        CancellationToken ct = default)
     {
+        using var searchStop = CancellationTokenSource.CreateLinkedTokenSource(ct, _referenceSearchStop.Token);
+        CancellationToken token = searchStop.Token;
+
         int limit = Math.Clamp(maxResults is > 0 ? maxResults.Value : DefaultMaxResults, 1, 100_000);
         bool hasInclude = includePatterns is { Count: > 0 };
         bool hasExclude = excludePatterns is { Count: > 0 };
@@ -163,9 +186,13 @@ public sealed class UnityGuidIndex
 
         if (root != null)
         {
+            token.ThrowIfCancellationRequested();
             byte[] needle = Encoding.ASCII.GetBytes(guid);
-            Parallel.ForEach(EnumerateFiles(root, "*"), (path, state) =>
+            var options = new ParallelOptions { CancellationToken = token };
+            Parallel.ForEach(EnumerateFiles(root, "*"), options, (path, state) =>
             {
+                token.ThrowIfCancellationRequested();
+
                 if (hasInclude || hasExclude)
                 {
                     string relative = Path.GetRelativePath(root, path).Replace('\\', '/');
@@ -184,8 +211,9 @@ public sealed class UnityGuidIndex
 
                 if (selfMeta != null && string.Equals(Path.GetFullPath(path), selfMeta, StringComparison.OrdinalIgnoreCase)) return;
 
-                foreach (GuidReference reference in ScanFile(path, needle))
+                foreach (GuidReference reference in ScanFile(path, needle, token))
                 {
+                    token.ThrowIfCancellationRequested();
                     if (Interlocked.Increment(ref total) > limit)
                     {
                         truncated = true;
@@ -266,7 +294,7 @@ public sealed class UnityGuidIndex
         return null;
     }
 
-    private static List<GuidReference> ScanFile(string path, byte[] needle)
+    private static List<GuidReference> ScanFile(string path, byte[] needle, CancellationToken ct)
     {
         var results = new List<GuidReference>();
         byte[] bytes;
@@ -296,6 +324,7 @@ public sealed class UnityGuidIndex
 
         while (searchFrom < data.Length)
         {
+            ct.ThrowIfCancellationRequested();
             int rel = data[searchFrom..].IndexOf(needle);
             if (rel < 0) break;
             int hit = searchFrom + rel;

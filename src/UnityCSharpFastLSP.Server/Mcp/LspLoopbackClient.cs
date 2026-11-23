@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -22,6 +23,7 @@ public sealed class LspLoopbackClient : IDisposable
     private readonly FrameSinkStream _sink;
     private readonly Func<byte[], bool> _send;
     private readonly LspProxy? _proxy;
+    private readonly RequestCancellationRegistry _cancellationRegistry = new();
     private readonly object _sendGate = new();
     private readonly ConcurrentDictionary<long, TaskCompletionSource<LspResult>> _pending = new();
     private readonly ConcurrentDictionary<string, JsonNode> _diagnostics = new(StringComparer.OrdinalIgnoreCase);
@@ -32,12 +34,12 @@ public sealed class LspLoopbackClient : IDisposable
         _sink = new FrameSinkStream(OnServerMessage);
         if (proxy)
         {
-            _proxy = new LspProxy(_sink, upstreamPath, upstreamKind, workspacePath);
+            _proxy = new LspProxy(_sink, upstreamPath, upstreamKind, workspacePath, cancellationRegistry: _cancellationRegistry);
             _send = _proxy.HandleClientMessage;
         }
         else
         {
-            var server = new LspServer(_sink);
+            var server = new LspServer(_sink, cancellationRegistry: _cancellationRegistry);
             _send = server.HandleMessage;
         }
     }
@@ -68,6 +70,8 @@ public sealed class LspLoopbackClient : IDisposable
     public async Task<LspResult> RequestAsync(string method, JsonNode? parameters, TimeSpan timeout, CancellationToken ct = default)
     {
         long id = Interlocked.Increment(ref _nextId);
+        string requestKey = id.ToString(CultureInfo.InvariantCulture);
+        _cancellationRegistry.Register(requestKey, ct);
         var tcs = new TaskCompletionSource<LspResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         _pending[id] = tcs;
 
@@ -91,6 +95,7 @@ public sealed class LspLoopbackClient : IDisposable
         }
         finally
         {
+            _cancellationRegistry.Unregister(requestKey);
             _pending.TryRemove(id, out _);
         }
     }

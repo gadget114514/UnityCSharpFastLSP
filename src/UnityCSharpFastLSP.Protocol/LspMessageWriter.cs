@@ -13,6 +13,7 @@ public static class JsonRpcErrorCode
     public const int InvalidParams = -32602;
     public const int InternalError = -32603;
     public const int ServerNotInitialized = -32002;
+    public const int RequestCancelled = -32800;
 
     /// <summary>LSP 3.17: リクエストは正しいが処理に失敗した（例: upstream サーバーを起動できない）。</summary>
     public const int RequestFailed = -32803;

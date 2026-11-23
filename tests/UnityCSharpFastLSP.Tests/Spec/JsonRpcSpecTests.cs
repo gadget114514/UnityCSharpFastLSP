@@ -1,4 +1,6 @@
+using System.Text;
 using System.Text.Json;
+using UnityCSharpFastLSP.Server;
 using Xunit;
 
 namespace UnityCSharpFastLSP.Tests.Spec;
@@ -106,6 +108,20 @@ public class JsonRpcSpecTests
         s.Notify("$/cancelRequest", new { id = 999 });
 
         Assert.Equal(before, s.CapturedByteCount);
+    }
+
+    [Fact]
+    public void CancelRequestNotification_CancelsRegisteredRequest()
+    {
+        using var output = new SyncCaptureStream();
+        var server = new LspServer(output);
+        using var cts = new CancellationTokenSource();
+        CancellationToken registered = server.CancellationRegistry.Register("7", cts.Token);
+
+        server.HandleMessage(Encoding.UTF8.GetBytes(
+            """{"jsonrpc":"2.0","method":"$/cancelRequest","params":{"id":7}}"""));
+
+        Assert.True(registered.IsCancellationRequested);
     }
 
     [Fact]

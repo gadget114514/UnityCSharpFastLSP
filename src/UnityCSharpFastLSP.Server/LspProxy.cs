@@ -74,6 +74,8 @@ public sealed class LspProxy : IDisposable
     /// <summary>FastLSP 側の GUID 機能（索引・unitylsp/guid* 応答）が有効か。upstream が advertise すると false。</summary>
     public bool FastGuidFeatureEnabled => _fastServer.State.WorkspaceManager.GuidIndex.Enabled;
 
+    public RequestCancellationRegistry CancellationRegistry => _fastServer.CancellationRegistry;
+
     /// <summary>Upstream の起動に失敗した、または起動後に終了した場合のエラー内容。利用可能なら null。</summary>
     public string? UpstreamError
     {
@@ -98,12 +100,13 @@ public sealed class LspProxy : IDisposable
         UpstreamKind upstreamKind = UpstreamKind.Auto,
         string? workspacePath = null,
         UpstreamCapabilitiesCache? capabilitiesCache = null,
-        Func<UpstreamAttempt, string?, Process>? upstreamStarter = null)
+        Func<UpstreamAttempt, string?, Process>? upstreamStarter = null,
+        RequestCancellationRegistry? cancellationRegistry = null)
     {
         _upstreamStarter = upstreamStarter ?? StartUpstreamProcess;
         _capabilitiesCache = capabilitiesCache ?? UpstreamCapabilitiesCache.CreateDefault();
         _clientOutput = clientOutput;
-        _fastServer = new LspServer(clientOutput, isProxy: true);
+        _fastServer = new LspServer(clientOutput, isProxy: true, cancellationRegistry);
         _requestedKind = upstreamKind;
         _workspacePath = workspacePath;
         _upstreamKind = upstreamKind;
@@ -161,6 +164,18 @@ public sealed class LspProxy : IDisposable
         using JsonDocument doc = JsonDocument.Parse(message);
         JsonElement root = doc.RootElement;
         string method = root.TryGetProperty("method", out var m) ? m.GetString() ?? "" : "";
+
+        if (method == "$/cancelRequest")
+        {
+            if (root.TryGetProperty("params", out var cancelParams) &&
+                cancelParams.ValueKind == JsonValueKind.Object &&
+                cancelParams.TryGetProperty("id", out JsonElement cancelId))
+            {
+                CancellationRegistry.Cancel(cancelId.GetRawText());
+            }
+            ForwardToUpstream(message);
+            return true;
+        }
 
         // 1. 同期系通知 (didOpen, didChange, didClose)
         if (method is "textDocument/didOpen" or "textDocument/didChange" or "textDocument/didClose")

@@ -10,6 +10,7 @@ public sealed class LspServer
 {
     private readonly ServerState _state;
     private readonly LspMessageWriter _writer;
+    private readonly RequestCancellationRegistry _cancellationRegistry;
     private readonly bool _isProxy;
     private bool _isShutdown;
     private bool _isInitialized;
@@ -24,14 +25,17 @@ public sealed class LspServer
     /// <summary>独自拡張: guid を参照しているシーン・プレハブ等の位置を返す。</summary>
     public const string GuidReferencesMethod = "unitylsp/guidReferences";
 
-    public LspServer(Stream output, bool isProxy = false)
+    public LspServer(Stream output, bool isProxy = false, RequestCancellationRegistry? cancellationRegistry = null)
     {
         _writer = new LspMessageWriter(output);
         _state = new ServerState(_writer);
+        _cancellationRegistry = cancellationRegistry ?? new RequestCancellationRegistry();
         _isProxy = isProxy;
     }
 
     public ServerState State => _state;
+
+    public RequestCancellationRegistry CancellationRegistry => _cancellationRegistry;
 
     /// <summary>
     /// 以降の応答をクライアントへ書かずに捕捉する。プロキシが FastLSP の結果を検査し、
@@ -74,6 +78,7 @@ public sealed class LspServer
         string method = root.TryGetProperty("method", out var m) ? m.GetString() ?? "" : "";
         bool hasId = root.TryGetProperty("id", out var idElem);
         object? id = hasId ? GetIdValue(idElem) : null;
+        string idKey = hasId ? idElem.GetRawText() : "";
         JsonElement parameters = root.TryGetProperty("params", out var p) ? p : default;
 
         // 仕様: initialize 以外のリクエストは初期化前なら -32002、shutdown 後なら -32600 を返す
@@ -97,6 +102,14 @@ public sealed class LspServer
         {
             switch (method)
             {
+                case "$/cancelRequest":
+                    if (parameters.ValueKind == JsonValueKind.Object &&
+                        parameters.TryGetProperty("id", out JsonElement cancelId))
+                    {
+                        _cancellationRegistry.Cancel(cancelId.GetRawText());
+                    }
+                    break;
+
                 case "initialize":
                     HandleInitialize(id, parameters);
                     _isInitialized = true;
@@ -182,7 +195,7 @@ public sealed class LspServer
                     break;
 
                 case GuidReferencesMethod:
-                    HandleGuidReferences(id, parameters);
+                    HandleGuidReferences(id, parameters, _cancellationRegistry.GetToken(idKey));
                     break;
 
                 default:
@@ -193,6 +206,9 @@ public sealed class LspServer
                     }
                     break;
             }
+        }
+        catch (OperationCanceledException)
+        {
         }
         catch (Exception ex)
         {
@@ -522,7 +538,7 @@ public sealed class LspServer
         _writer.WriteRawResponse(id, "null"u8.ToArray());
     }
 
-    private void HandleGuidReferences(object? id, JsonElement parameters)
+    private void HandleGuidReferences(object? id, JsonElement parameters, CancellationToken ct)
     {
         if (!TryResolveGuidQuery(id, parameters, out string? guid, out GuidQueryParams? query)) return;
 
@@ -533,7 +549,7 @@ public sealed class LspServer
         }
 
         GuidReferencesResult result = _state.WorkspaceManager.GuidIndex.FindReferences(
-            guid, query!.MaxResults, query.IncludePatterns, query.ExcludePatterns);
+            guid, query!.MaxResults, query.IncludePatterns, query.ExcludePatterns, ct);
         _writer.WriteResponse(id, result, LspJsonSerializerContext.Default.GuidReferencesResult);
     }
 

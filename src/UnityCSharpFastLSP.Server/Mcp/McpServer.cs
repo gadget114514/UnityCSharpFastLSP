@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -47,6 +48,7 @@ public sealed class McpServer : IDisposable
     private readonly object _outputGate = new();
     private readonly object _inflightGate = new();
     private readonly List<Task> _inflight = new();
+    private readonly ConcurrentDictionary<string, CancellationTokenSource> _toolCalls = new(StringComparer.Ordinal);
 
     /// <param name="options">起動オプション。</param>
     /// <param name="input">MCP の入力ストリーム（UTF-8, 1 行 1 メッセージ）。</param>
@@ -241,11 +243,15 @@ public sealed class McpServer : IDisposable
         string? method = GetString(msg["method"]);
         if (method == null) return; // クライアントからの応答など。無視する。
 
-        // 通知（id なし）は無視（notifications/initialized, notifications/cancelled 等）
-        if (!msg.ContainsKey("id")) return;
+        JsonNode? parameters = msg["params"];
+
+        if (!msg.ContainsKey("id"))
+        {
+            if (method == "notifications/cancelled") HandleCancelled(parameters);
+            return;
+        }
 
         JsonNode? id = msg["id"]?.DeepClone();
-        JsonNode? parameters = msg["params"];
 
         switch (method)
         {
@@ -309,6 +315,20 @@ public sealed class McpServer : IDisposable
         };
     }
 
+    private void HandleCancelled(JsonNode? parameters)
+    {
+        if (parameters?["requestId"] is not JsonNode requestId) return;
+        if (!_toolCalls.TryGetValue(requestId.ToJsonString(), out CancellationTokenSource? source)) return;
+
+        try
+        {
+            source.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
     /// <summary>tools/call は並行処理する（読み取りループを塞がない）。</summary>
     private void StartToolCall(JsonNode? id, JsonNode? parameters, CancellationToken ct)
     {
@@ -342,17 +362,30 @@ public sealed class McpServer : IDisposable
             return;
         }
 
+        string callKey = id?.ToJsonString() ?? "";
+        CancellationTokenSource callCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        _toolCalls[callKey] = callCts;
+
         Task task = Task.Run(async () =>
         {
             LspResult outcome;
             try
             {
-                outcome = await ExecuteToolAsync(tool, arguments, ct).ConfigureAwait(false);
+                outcome = await ExecuteToolAsync(tool, arguments, callCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                outcome = new LspResult(null, new LspError(JsonRpcErrorCode.RequestCancelled, "Request cancelled"));
             }
             catch (Exception ex)
             {
                 // 予期しない例外は isError で返し、MCP セッションは継続する
                 outcome = new LspResult(null, new LspError(JsonRpcErrorCode.InternalError, ex.Message));
+            }
+            finally
+            {
+                _toolCalls.TryRemove(callKey, out _);
+                callCts.Dispose();
             }
 
             WriteResult(id, BuildToolResult(outcome));
